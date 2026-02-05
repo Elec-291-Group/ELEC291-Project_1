@@ -39,7 +39,7 @@ org 0x002B
 ; include 
 $NOLIST
 $include(..\inc\MODMAX10)
-$include(..\inc\LCD_4bit_DE10Lite.inc) ; LCD related functions and utility macros
+$include(..\inc\LCD_4bit_DE10Lite_no_RW.inc) ; LCD related functions and utility macros
 $include(..\inc\math32.asm) ; 
 $LIST
 ; ----------------------------------------------------------------------------------------------;
@@ -67,7 +67,7 @@ reflow_time:  ds 4 ;
 next_state:   ds 1 ;
 current_state:ds 1 ;
 
-power_output:  ds 4 ;
+power_output:  ds 4 ; power output value in watts
 
 KEY1_DEB_timer: ds 1
 SEC_FSM_timer: ds 1
@@ -83,6 +83,7 @@ SEC_FSM_state: ds 1
 bseg
 mf:		dbit 1 ; math32 sign
 one_second_flag: dbit 1
+one_millisecond_flag: dbit 1 ; one_millisecond_flag for pwm signal
 
 soak_temp_reached: dbit 1
 reflow_temp_reached: dbit 1
@@ -114,16 +115,18 @@ TIMER2_RELOAD  EQU ((65536-(CLK/(12*TIMER2_RATE))))
 
 SOUND_OUT      EQU P1.5 ; Pin connected to the speaker
 
+PWM_OUT		   EQU P1.3 ; Pin connected to the ssr for outputing pwm signal
+
 ; These 'equ' must match the wiring between the DE10Lite board and the LCD!
 ; P0 is in connector JPIO.  Check "CV-8052 Soft Processor in the DE10Lite Board: Getting
 ; Started Guide" for the details.
-ELCD_RS equ P3.7
-ELCD_RW equ P3.5
-ELCD_E  equ P3.3
-ELCD_D4 equ P3.1
-ELCD_D5 equ P2.7
-ELCD_D6 equ P2.5
-ELCD_D7 equ P2.3
+ELCD_RS equ P1.7
+; ELCD_RW equ Px.x ; Not used.  Connected to ground 
+ELCD_E  equ P1.1
+ELCD_D4 equ P0.7
+ELCD_D5 equ P0.5
+ELCD_D6 equ P0.3
+ELCD_D7 equ P0.1
 
 ;                     1234567890123456    <- This helps determine the location of the counter
 Initial_Message:  db 'initial message', 0
@@ -294,7 +297,7 @@ Hex_to_bcd_8bit:
 	ret
 
 ;-----------------------------------------------;
-; Display Function fo LCD 						;
+; Display Function for LCD 						;
 ;-----------------------------------------------;
 
 
@@ -418,6 +421,15 @@ SEC_FSM_done:
 
 	ljmp loop
 
+
+;----------------------------------
+; generate pwm signal for the ssr 
+; 1.5s period for the pwm signal
+; with 1 watt clarity for the pwm signal
+; input parameter: power_output
+; used buffers: x, y
+;-----------------------------------
+pwm_wave_generator:
 
 
 END
