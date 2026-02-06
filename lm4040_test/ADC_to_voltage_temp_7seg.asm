@@ -15,6 +15,7 @@ dseg at 30h
 x:		ds	4
 y:		ds	4
 bcd:	ds	5
+VAL_LM4040: ds 2
 
 bseg
 
@@ -219,35 +220,38 @@ mycode:
 	lcall Wait50ms
 
 forever:
-	mov a, SWA ; The first three switches select the channel to read
-	anl a, #0x07
-	mov ADC_C, #0x00
-	
-	; Load 32-bit 'x' with 12-bit adc result
-	mov x+3, #0
-	mov x+2, #0
-	mov x+1, ADC_H
+	; Read the LM4040 on ADC_IN1 (channel 1)
+	mov ADC_C, #0x01
+	; Save LM4040 result for later use
+	mov VAL_LM4040+0, ADC_L
+	mov VAL_LM4040+1, ADC_H
+
+	; Read the signal connected to AIN7 (channel 7)
+	mov ADC_C, #0x07
+    
+    ; Convert to voltage
 	mov x+0, ADC_L
-	
-	; Convert to voltage by multiplying by 5.000 and dividing by 4096
-	Load_y(5000)
+	mov x+1, ADC_H
+	; Pad other bits with zero
+	mov x+2, #0
+	mov x+3, #0
+	Load_y(40959) ; The MEASURED voltage reference: 4.0959V, with 4 decimal places
 	lcall mul32
-	Load_y(4096)
+	; Retrive the ADC LM4040 value
+	mov y+0, VAL_LM4040+0
+	mov y+1, VAL_LM4040+1
+	; Pad other bits with zero
+	mov y+2, #0
+	mov y+3, #0
 	lcall div32
 	
- 	Load_y(1000) 
- 	lcall mul32
-	Load_y(12300) 
- 	lcall div32
-
- 	Load_y(22) 
- 	lcall add32
-
+	; Convert to BCD and display
 	lcall hex2bcd
 	lcall Display_Voltage_7seg
 	lcall Display_Voltage_LCD
 	lcall Display_Voltage_Serial
 
+	; Wait 250 ms between conversions
 	lcall Wait50ms
 	lcall Wait50ms
 	lcall Wait50ms

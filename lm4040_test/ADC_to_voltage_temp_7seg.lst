@@ -1,0 +1,487 @@
+                 -1   $MODMAX10
+0000              1   ;--------------------------------------------------------
+0000              2   ; Special Function Registers
+0000              3   ;--------------------------------------------------------
+0000              4   P0             DATA 0x80
+0000              5   SP             DATA 0x81
+0000              6   DPL            DATA 0x82
+0000              7   DPH            DATA 0x83
+0000              8   PCON           DATA 0x87
+0000              9   TCON           DATA 0x88
+0000             10   TMOD           DATA 0x89
+0000             11   TL0            DATA 0x8a
+0000             12   TL1            DATA 0x8b
+0000             13   TH0            DATA 0x8c
+0000             14   TH1            DATA 0x8d
+0000             15   P1             DATA 0x90
+0000             16   SCON           DATA 0x98
+0000             17   SBUF           DATA 0x99
+0000             18   P2             DATA 0xa0
+0000             19   IE             DATA 0xa8
+0000             20   P3             DATA 0xb0
+0000             21   IP             DATA 0xb8
+0000             22   PSW            DATA 0xd0
+0000             23   ACC            DATA 0xe0
+0000             24   B              DATA 0xf0
+0000             25   T2CON          DATA 0xc8
+0000             26   RCAP2L         DATA 0xca
+0000             27   RCAP2H         DATA 0xcb
+0000             28   TL2            DATA 0xcc
+0000             29   TH2            DATA 0xcd
+0000             30   DPS            DATA 0x86
+0000             31   DPH1           DATA 0x85
+0000             32   DPL1           DATA 0x84
+0000             33   HEX0           DATA 0x91
+0000             34   HEX1           DATA 0x92
+0000             35   HEX2           DATA 0x93
+0000             36   HEX3           DATA 0x94
+0000             37   HEX4           DATA 0x8e
+0000             38   HEX5           DATA 0x8f
+0000             39   LEDRA          DATA 0xe8
+0000             40   LEDRB          DATA 0x95
+0000             41   SWA            DATA 0xe8
+0000             42   SWB            DATA 0x95
+0000             43   KEY            DATA 0xf8
+0000             44   P0MOD          DATA 0x9a
+0000             45   P1MOD          DATA 0x9b
+0000             46   P2MOD          DATA 0x9c
+0000             47   P3MOD          DATA 0x9d
+0000             48   REP_ADD_L      DATA 0xf1
+0000             49   REP_ADD_H      DATA 0xf2
+0000             50   REP_VALUE      DATA 0xf3
+0000             51   DEBUG_CALL_L   DATA 0xfa
+0000             52   DEBUG_CALL_H   DATA 0xfb
+0000             53   BPC            DATA 0xfc
+0000             54   BPS            DATA 0xfd
+0000             55   BPAL           DATA 0xfe
+0000             56   BPAH           DATA 0xff
+0000             57   LBPAL          DATA 0xfa
+0000             58   LBPAH          DATA 0xfb
+0000             59   P4             DATA 0xc0
+0000             60   P4MOD          DATA 0xc1
+0000             61   XRAMUSEDAS     DATA 0xc3
+0000             62   UFM_ADD0       DATA 0xe1
+0000             63   UFM_ADD1       DATA 0xe2
+0000             64   UFM_ADD2       DATA 0xe3
+0000             65   UFM_DATA0      DATA 0xe4
+0000             66   UFM_DATA1      DATA 0xe5
+0000             67   UFM_DATA2      DATA 0xe6
+0000             68   UFM_DATA3      DATA 0xe7
+0000             69   UFM_CONTROL0   DATA 0xe9
+0000             70   UFM_CONTROL1   DATA 0xea
+0000             71   UFM_CONTROL2   DATA 0xeb
+0000             72   UFM_CONTROL3   DATA 0xec
+0000             73   UFM_DATA_CMD   DATA 0xed
+0000             74   UFM_DATA_STATUS DATA 0xee
+0000             75   UFM_CONTROL_CMD DATA 0xef
+0000             76   ADC_C          DATA 0xa1
+0000             77   ADC_L          DATA 0xa2
+0000             78   ADC_H          DATA 0xa3
+0000             79   
+0000             80   ;--------------------------------------------------------
+0000             81   ; special function bits
+0000             82   ;--------------------------------------------------------
+0000             83   P0_0           BIT 0x80
+0000             84   P0_1           BIT 0x81
+0000             85   P0_2           BIT 0x82
+0000             86   P0_3           BIT 0x83
+0000             87   P0_4           BIT 0x84
+0000             88   P0_5           BIT 0x85
+0000             89   P0_6           BIT 0x86
+0000             90   P0_7           BIT 0x87
+0000             91   IT0            BIT 0x88
+0000             92   IE0            BIT 0x89
+0000             93   IT1            BIT 0x8a
+0000             94   IE1            BIT 0x8b
+0000             95   TR0            BIT 0x8c
+0000             96   TF0            BIT 0x8d
+0000             97   TR1            BIT 0x8e
+0000             98   TF1            BIT 0x8f
+0000             99   P1_0           BIT 0x90
+0000            100   P1_1           BIT 0x91
+0000            101   P1_2           BIT 0x92
+0000            102   P1_3           BIT 0x93
+0000            103   P1_4           BIT 0x94
+0000            104   P1_5           BIT 0x95
+0000            105   P1_6           BIT 0x96
+0000            106   P1_7           BIT 0x97
+0000            107   RI             BIT 0x98
+0000            108   TI             BIT 0x99
+0000            109   RB8            BIT 0x9a
+0000            110   TB8            BIT 0x9b
+0000            111   REN            BIT 0x9c
+0000            112   SM2            BIT 0x9d
+0000            113   SM1            BIT 0x9e
+0000            114   SM0            BIT 0x9f
+0000            115   P2_0           BIT 0xa0
+0000            116   P2_1           BIT 0xa1
+0000            117   P2_2           BIT 0xa2
+0000            118   P2_3           BIT 0xa3
+0000            119   P2_4           BIT 0xa4
+0000            120   P2_5           BIT 0xa5
+0000            121   P2_6           BIT 0xa6
+0000            122   P2_7           BIT 0xa7
+0000            123   EX0            BIT 0xa8
+0000            124   ET0            BIT 0xa9
+0000            125   EX1            BIT 0xaa
+0000            126   ET1            BIT 0xab
+0000            127   ES             BIT 0xac
+0000            128   ET2            BIT 0xad
+0000            129   EA             BIT 0xaf
+0000            130   P3_0           BIT 0xb0
+0000            131   P3_1           BIT 0xb1
+0000            132   P3_2           BIT 0xb2
+0000            133   P3_3           BIT 0xb3
+0000            134   P3_4           BIT 0xb4
+0000            135   P3_5           BIT 0xb5
+0000            136   P3_6           BIT 0xb6
+0000            137   P3_7           BIT 0xb7
+0000            138   RXD            BIT 0xb0
+0000            139   TXD            BIT 0xb1
+0000            140   INT0           BIT 0xb2
+0000            141   INT1           BIT 0xb3
+0000            142   T0             BIT 0xb4
+0000            143   T1             BIT 0xb5
+0000            144   WR             BIT 0xb6
+0000            145   RD             BIT 0xb7
+0000            146   PX0            BIT 0xb8
+0000            147   PT0            BIT 0xb9
+0000            148   PX1            BIT 0xba
+0000            149   PT1            BIT 0xbb
+0000            150   PS             BIT 0xbc
+0000            151   PT2            BIT 0xbd
+0000            152   P              BIT 0xd0
+0000            153   F1             BIT 0xd1
+0000            154   OV             BIT 0xd2
+0000            155   RS0            BIT 0xd3
+0000            156   RS1            BIT 0xd4
+0000            157   F0             BIT 0xd5
+0000            158   AC             BIT 0xd6
+0000            159   CY             BIT 0xd7
+0000            160   T2CON_0        BIT 0xc8
+0000            161   T2CON_1        BIT 0xc9
+0000            162   T2CON_2        BIT 0xca
+0000            163   T2CON_3        BIT 0xcb
+0000            164   T2CON_4        BIT 0xcc
+0000            165   T2CON_5        BIT 0xcd
+0000            166   T2CON_6        BIT 0xce
+0000            167   T2CON_7        BIT 0xcf
+0000            168   CP_RL2         BIT 0xc8
+0000            169   C_T2           BIT 0xc9
+0000            170   TR2            BIT 0xca
+0000            171   EXEN2          BIT 0xcb
+0000            172   TCLK           BIT 0xcc
+0000            173   RCLK           BIT 0xcd
+0000            174   EXF2           BIT 0xce
+0000            175   TF2            BIT 0xcf
+0000            176   LEDRA_0        BIT 0xe8
+0000            177   LEDRA_1        BIT 0xe9
+0000            178   LEDRA_2        BIT 0xea
+0000            179   LEDRA_3        BIT 0xeb
+0000            180   LEDRA_4        BIT 0xec
+0000            181   LEDRA_5        BIT 0xed
+0000            182   LEDRA_6        BIT 0xee
+0000            183   LEDRA_7        BIT 0xef
+0000            184   SWA_0          BIT 0xe8
+0000            185   SWA_1          BIT 0xe9
+0000            186   SWA_2          BIT 0xea
+0000            187   SWA_3          BIT 0xeb
+0000            188   SWA_4          BIT 0xec
+0000            189   SWA_5          BIT 0xed
+0000            190   SWA_6          BIT 0xee
+0000            191   SWA_7          BIT 0xef
+0000            192   KEY_0          BIT 0xf8
+0000            193   KEY_1          BIT 0xf9
+0000            194   KEY_2          BIT 0xfa
+0000            195   KEY_3          BIT 0xfb
+0000            196   P4_0           BIT 0xc0
+0000            197   P4_1           BIT 0xc1
+0000            198   P4_2           BIT 0xc2
+0000            199   P4_3           BIT 0xc3
+0000            200   P4_4           BIT 0xc4
+0000            201   P4_5           BIT 0xc5
+0000            202   P4_6           BIT 0xc6
+0000            203   P4_7           BIT 0xc7
+0000              2   
+0000              3   ; The Special Function Registers below were added to 'MODMAX10' recently.
+0000              4   ; If you are getting an error, uncomment the three lines below.
+0000              5   
+0000              6   ; ADC_C DATA 0xa1
+0000              7   ; ADC_L DATA 0xa2
+0000              8   ; ADC_H DATA 0xa3
+0000              9   
+0000             10            CSEG at 0
+0000 0204A0      11            ljmp mycode
+0003             12   
+0030             13   dseg at 30h
+0030             14   
+0030             15   x:               ds      4
+0034             16   y:               ds      4
+0038             17   bcd:     ds      5
+003D             18   VAL_LM4040: ds 2
+003F             19   
+0000             20   bseg
+0000             21   
+0000             22   mf:              dbit 1
+0001             23   
+0001             24   FREQ   EQU 33333333
+0001             25   BAUD   EQU 115200
+0001             26   T2LOAD EQU 65536-(FREQ/(32*BAUD))
+0001             27   
+0003             28   CSEG
+0003             29   
+0003             30   InitSerialPort:
+0003             31            ; Configure serial port and baud rate
+0003 C2CA        32            clr TR2 ; Disable timer 2
+0005 75C830      33            mov T2CON, #30H ; RCLK=1, TCLK=1 
+0008 75CBFF      34            mov RCAP2H, #high(T2LOAD)  
+000B 75CAF7      35            mov RCAP2L, #low(T2LOAD)
+000E D2CA        36            setb TR2 ; Enable timer 2
+0010 759852      37            mov SCON, #52H
+0013 22          38            ret
+0014             39   
+0014             40   putchar:
+0014 3099FD      41       JNB TI, putchar
+0017 C299        42       CLR TI
+0019 F599        43       MOV SBUF, a
+001B 22          44       RET
+001C             45   
+001C             46   SendString:
+001C E4          47       CLR A
+001D 93          48       MOVC A, @A+DPTR
+001E 6006        49       JZ SSDone
+0020 120014      50       LCALL putchar
+0023 A3          51       INC DPTR
+0024 80F6        52       SJMP SendString
+0026             53   SSDone:
+0026 22          54       ret
+0027             55   
+                 -1   $include(math32.asm)
+                614   $LIST
+0319             57   
+0319             58   cseg
+0319             59   ; These 'equ' must match the wiring between the DE10Lite board and the LCD!
+0319             60   ; P0 is in connector JPIO.  Check "CV-8052 Soft Processor in the DE10Lite Board: Getting
+0319             61   ; Started Guide" for the details.
+0319             62   ELCD_RS equ P1.7
+0319             63   ; ELCD_RW equ Px.x ; Not used.  Connected to ground 
+0319             64   ELCD_E  equ P1.1
+0319             65   ELCD_D4 equ P0.7
+0319             66   ELCD_D5 equ P0.5
+0319             67   ELCD_D6 equ P0.3
+0319             68   ELCD_D7 equ P0.1
+                 70   	$LIST
+03D0             72   
+03D0             73   ; Look-up table for 7-seg displays
+03D0             74   myLUT:
+03D0 C0F9A4B0    75       DB 0xC0, 0xF9, 0xA4, 0xB0, 0x99        ; 0 TO 4
+     99
+03D5 9282F880    76       DB 0x92, 0x82, 0xF8, 0x80, 0x90        ; 4 TO 9
+     90
+03DA 8883C6A1    77       DB 0x88, 0x83, 0xC6, 0xA1, 0x86, 0x8E  ; A to F
+     868E
+03E0             78   
+03E0             79   Wait50ms:
+03E0             80   ;33.33MHz, 1 clk per cycle: 0.03us
+03E0 781E        81            mov R0, #30
+03E2             82   Wait50ms_L3:
+03E2 794A        83            mov R1, #74
+03E4             84   Wait50ms_L2:
+03E4 7AFA        85            mov R2, #250
+03E6             86   Wait50ms_L1:
+03E6 DAFE        87            djnz R2, Wait50ms_L1 ;3*250*0.03us=22.5us
+03E8 D9FA        88       djnz R1, Wait50ms_L2 ;74*22.5us=1.665ms
+03EA D8F6        89       djnz R0, Wait50ms_L3 ;1.665ms*30=50ms
+03EC 22          90       ret
+03ED             91   
+03ED             92   Display_Voltage_7seg:
+03ED             93            
+03ED 9003D0      94            mov dptr, #myLUT
+03F0             95   
+03F0 E539        96            mov a, bcd+1
+03F2 C4          97            swap a
+03F3 540F        98            anl a, #0FH
+03F5 93          99            movc a, @a+dptr
+03F6 547F       100            anl a, #0x7f ; Turn on decimal point
+03F8 F594       101            mov HEX3, a
+03FA            102            
+03FA E539       103            mov a, bcd+1
+03FC 540F       104            anl a, #0FH
+03FE 93         105            movc a, @a+dptr
+03FF F593       106            mov HEX2, a
+0401            107   
+0401 E538       108            mov a, bcd+0
+0403 C4         109            swap a
+0404 540F       110            anl a, #0FH
+0406 93         111            movc a, @a+dptr
+0407 F592       112            mov HEX1, a
+0409            113            
+0409 E538       114            mov a, bcd+0
+040B 540F       115            anl a, #0FH
+040D 93         116            movc a, @a+dptr
+040E F591       117            mov HEX0, a
+0410            118            
+0410 22         119            ret
+0411            120   
+0411            121   Display_Voltage_LCD:
+0411 C0E0       122            push acc
+0413 7401       122            mov a, #1
+0415 14         122            dec a
+0416 1203B3     122            lcall ?Set_Cursor_2 ; Select column and row
+0419 D0E0       122            pop acc
+041B 7456       123            mov a, #'V'
+041D 12036B     124            lcall ?WriteData
+0420 743D       125            mov a, #'='
+0422 12036B     126            lcall ?WriteData
+0425            127   
+0425 E539       128            mov a, bcd+1
+0427 C4         129            swap a
+0428 540F       130            anl a, #0FH
+042A 4430       131            orl a, #'0'
+042C 12036B     132            lcall ?WriteData
+042F            133            
+042F 742E       134            mov a, #'.'
+0431 12036B     135            lcall ?WriteData
+0434            136            
+0434 E539       137            mov a, bcd+1
+0436 540F       138            anl a, #0FH
+0438 4430       139            orl a, #'0'
+043A 12036B     140            lcall ?WriteData
+043D            141   
+043D E538       142            mov a, bcd+0
+043F C4         143            swap a
+0440 540F       144            anl a, #0FH
+0442 4430       145            orl a, #'0'
+0444 12036B     146            lcall ?WriteData
+0447            147            
+0447 E538       148            mov a, bcd+0
+0449 540F       149            anl a, #0FH
+044B 4430       150            orl a, #'0'
+044D 12036B     151            lcall ?WriteData
+0450            152            
+0450 22         153            ret
+0451            154            
+0451            155   Display_Voltage_Serial:
+0451 7456       156            mov a, #'V'
+0453 120014     157            lcall putchar
+0456 743D       158            mov a, #'='
+0458 120014     159            lcall putchar
+045B            160   
+045B E539       161            mov a, bcd+1
+045D C4         162            swap a
+045E 540F       163            anl a, #0FH
+0460 4430       164            orl a, #'0'
+0462 120014     165            lcall putchar
+0465            166            
+0465 742E       167            mov a, #'.'
+0467 120014     168            lcall putchar
+046A            169            
+046A E539       170            mov a, bcd+1
+046C 540F       171            anl a, #0FH
+046E 4430       172            orl a, #'0'
+0470 120014     173            lcall putchar
+0473            174   
+0473 E538       175            mov a, bcd+0
+0475 C4         176            swap a
+0476 540F       177            anl a, #0FH
+0478 4430       178            orl a, #'0'
+047A 120014     179            lcall putchar
+047D            180            
+047D E538       181            mov a, bcd+0
+047F 540F       182            anl a, #0FH
+0481 4430       183            orl a, #'0'
+0483 120014     184            lcall putchar
+0486            185   
+0486 740D       186            mov a, #'\r'
+0488 120014     187            lcall putchar
+048B 740A       188            mov a, #'\n'
+048D 120014     189            lcall putchar
+0490            190            
+0490 22         191            ret
+0491            192   
+0491 566F6C74   193   Initial_Message:  db 'Voltmeter test', 0
+     6D657465
+     72207465
+     737400
+04A0            194   
+04A0            195   mycode:
+04A0 75817F     196            mov SP, #7FH
+04A3 E4         197            clr a
+04A4 F5E8       198            mov LEDRA, a
+04A6 F595       199            mov LEDRB, a
+04A8            200            
+04A8 120003     201            lcall InitSerialPort
+04AB            202            
+04AB            203            ; COnfigure the pins connected to the LCD as outputs
+04AB 759AAA     204            mov P0MOD, #10101010b ; P0.1, P0.3, P0.5, P0.7 are outputs.  ('1' makes the pin output)
+04AE 759B82     205       mov P1MOD, #10000010b ; P1.7 and P1.1 are outputs
+04B1            206   
+04B1 120375     207       lcall ELCD_4BIT ; Configure LCD in four bit mode
+04B4            208       ; For convenience a few handy macros are included in 'LCD_4bit_DE1Lite.inc':
+04B4 C0E0       209            push acc
+04B6 7401       209            mov a, #1
+04B8 14         209            dec a
+04B9 1203B5     209            lcall ?Set_Cursor_1 ; Select column and row
+04BC D0E0       209            pop acc
+04BE C083       210            push dph
+04C0 C082       210            push dpl
+04C2 C0E0       210            push acc
+04C4 900491     210            mov dptr, #Initial_Message
+04C7 1203A8     210            lcall ?Send_Constant_String
+04CA D0E0       210            pop acc
+04CC D082       210            pop dpl
+04CE D083       210            pop dph
+04D0            211            
+04D0 900491     212            mov dptr, #Initial_Message
+04D3 12001C     213            lcall SendString
+04D6 740D       214            mov a, #'\r'
+04D8 120014     215            lcall putchar
+04DB 740A       216            mov a, #'\n'
+04DD 120014     217            lcall putchar
+04E0            218            
+04E0 75A180     219            mov ADC_C, #0x80 ; Reset ADC
+04E3 1203E0     220            lcall Wait50ms
+04E6            221   
+04E6            222   forever:
+04E6            223            ; Read the LM4040 on ADC_IN1 (channel 1)
+04E6 75A101     224            mov ADC_C, #0x01
+04E9            225            ; Save LM4040 result for later use
+04E9 85A23D     226            mov VAL_LM4040+0, ADC_L
+04EC 85A33E     227            mov VAL_LM4040+1, ADC_H
+04EF            228   
+04EF            229            ; Read the signal connected to AIN7 (channel 7)
+04EF 75A100     230            mov ADC_C, #0x00
+04F2            231       
+04F2            232       ; Convert to voltage
+04F2 85A230     233            mov x+0, ADC_L
+04F5 85A331     234            mov x+1, ADC_H
+04F8            235            ; Pad other bits with zero
+04F8 753200     236            mov x+2, #0
+04FB 753300     237            mov x+3, #0
+04FE 7534FF     238            mov y+0, #low (40959 % 0x10000) 
+0501 75359F     238            mov y+1, #high(40959 % 0x10000) 
+0504 753600     238            mov y+2, #low (40959 / 0x10000) 
+0507 753700     238            mov y+3, #high(40959 / 0x10000)  ; The MEASURED voltage reference: 4.0959V, with 4 decimal places
+050A 120185     239            lcall mul32
+050D            240            ; Retrive the ADC LM4040 value
+050D 853D34     241            mov y+0, VAL_LM4040+0
+0510 853E35     242            mov y+1, VAL_LM4040+1
+0513            243            ; Pad other bits with zero
+0513 753600     244            mov y+2, #0
+0516 753700     245            mov y+3, #0
+0519 120279     246            lcall div32
+051C            247            
+051C            248            ; Convert to BCD and display
+051C 120027     249            lcall hex2bcd
+051F 1203ED     250            lcall Display_Voltage_7seg
+0522 120411     251            lcall Display_Voltage_LCD
+0525 120451     252            lcall Display_Voltage_Serial
+0528            253   
+0528            254            ; Wait 250 ms between conversions
+0528 1203E0     255            lcall Wait50ms
+052B 1203E0     256            lcall Wait50ms
+052E 1203E0     257            lcall Wait50ms
+0531 1203E0     258            lcall Wait50ms
+0534 0204E6     259            ljmp forever
+0537            260            
+0537            261   end

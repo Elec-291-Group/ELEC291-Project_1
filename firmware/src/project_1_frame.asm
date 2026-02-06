@@ -1,50 +1,40 @@
-; Project 1 Frame Code
+; Project 1
 ; CV-8052 microcontroller in DE10-Lite board
 
-
-; org applied to current segment, default is CSEG
 ; ----------------------------------------------------------------------------------------------;
-; Reset vector & Interrupt Vectors
-
 ; Reset vector
 org 0x0000
     ljmp main
-
 ; External interrupt 0 vector
 org 0x0003
 	reti
-
 ; Timer/Counter 0 overflow interrupt vector
 org 0x000B
 	ljmp Timer0_ISR
-
 ; External interrupt 1 vector
 org 0x0013
 	reti
-
 ; Timer/Counter 1 overflow interrupt vector
 org 0x001B
 	reti
-
 ; Serial port receive/transmit interrupt vector
 org 0x0023 
 	reti
-	
 ; Timer/Counter 2 overflow interrupt vector
 org 0x002B
 	ljmp Timer2_ISR
 ; ----------------------------------------------------------------------------------------------;
 
 ; ----------------------------------------------------------------------------------------------;
-; include 
+; includes
 $NOLIST
 $include(..\inc\MODMAX10)
-$include(..\inc\LCD_4bit_DE10Lite.inc) ; LCD related functions and utility macros
+$include(..\inc\LCD_4bit_DE10Lite_no_RW.inc) ; LCD related functions and utility macros
 $include(..\inc\math32.asm) ; 
 $LIST
 ; ----------------------------------------------------------------------------------------------;
 
-; ---------------------------------------------------------------------------------------------;
+; ----------------------------------------------------------------------------------------------;
 ; Data Segment 0x30 -- 0x7F  (overall 79d bytes available)
 dseg at 0x30
 current_time_sec:     ds 1
@@ -64,22 +54,22 @@ soak_time:    ds 4 ;
 reflow_time:  ds 4 ;
 
 power_output:  ds 4 ;
+pwm_counter: ds 4 ; counter for pwm (0-1500)
 
 KEY1_DEB_timer: ds 1
 SEC_FSM_timer:  ds 1
-
 KEY1_DEB_state:    ds 1
 SEC_FSM_state: 	   ds 1
 Control_FSM_state: ds 1 
 ; 46d bytes used
 ; ---------------------------------------------------------------------------------------------;
 
-
 ; ---------------------------------------------------------------------------------------------;
 ; bit operation setb, clr, jb, and jnb
 bseg
 mf:		dbit 1 ; math32 sign
 one_second_flag: dbit 1
+one_millisecond_flag: dbit 0 ; one_millisecond_flag for pwm signal
 
 soak_temp_reached: dbit 1
 reflow_temp_reached: dbit 1
@@ -100,8 +90,7 @@ PB2_flag: dbit 1 ; pause process
 ; 11 bits used
 ; ---------------------------------------------------------------------------------------------;
 
-; Code start here
-; -----------------------------------------------------------------------------------------------------------------;
+; ---------------------------------------------------------------------------------------------;
 cseg
 CLK            EQU 33333333 ; Microcontroller system crystal frequency in Hz
 BAUD 		   EQU 57600
@@ -114,7 +103,11 @@ TIMER_1_RELOAD EQU (256-((2*CLK)/(12*32*BAUD)))
 TIMER2_RATE    EQU 1000     ; 1000Hz, for a timer tick of 1ms
 TIMER2_RELOAD  EQU ((65536-(CLK/(12*TIMER2_RATE))))
 
+PWM_PERIOD     EQU 1499 ; 1.5s period
+
 SOUND_OUT      EQU P1.5 ; Pin connected to the speaker
+
+PWM_OUT		   EQU P1.3 ; Pin connected to the ssr for outputing pwm signal
 
 ; These 'equ' must match the wiring between the DE10Lite board and the LCD!
 ; P0 is in connector JPIO.  Check "CV-8052 Soft Processor in the DE10Lite Board: Getting
@@ -156,6 +149,7 @@ String_Blank:    db '                ', 0
 ; 	Timer 1: Serial port baud rate 57600 generator
 ;  	Timer 2: 1ms interrupt for BCD counter increment/decrement
 ;----------------------------------------------------------------------------------------------;
+
 ; Routine to initialize the ISR for Timer 0 ;
 Timer0_Init:
 	mov a, TMOD
@@ -168,18 +162,17 @@ Timer0_Init:
     setb ET0  ; Enable timer 0 interrupt
     setb TR0  ; Start timer 0
 	ret
-
 ; ISR for timer 0.  Set to execute every 1/4096Hz 
-; to generate a 2048 Hz square wave at pin P3.7 
+; to generate a 2048 Hz square wave at pin P1.5 
 Timer0_ISR:
 	;clr TF0  ; According to the data sheet this is done for us already.
 	mov TH0, #high(TIMER0_RELOAD) ; Timer 0 doesn't have autoreload in the CV-8052
 	mov TL0, #low(TIMER0_RELOAD)
-	cpl SOUND_OUT ; Connect speaker to P3.7!
+	cpl SOUND_OUT ; Connect speaker to P1.5
 	reti
-;-----------------------------------------------------------------------------------------------;
 
 ; -----------------------------------------------------------------------------------------------;
+
 ; Routine to initialize the serial port at 57600 baud (Timer 1 in mode 2)
 Initialize_Serial_Port:
 	; Configure serial port and baud rate
@@ -210,7 +203,32 @@ SendString:
     sjmp SendString  
 SendString_L1:
 	ret
+
 ; -----------------------------------------------------------------------------------------------;
+
+; serial debugging
+; send a four byte number via serial to laptop
+; need to be used with python script
+; content needed to be sent should be stored in the varaible x
+Send32:
+    ; data format: 0xAA, 0x55, x+3, x+2, x+1, x+0, 0xAH (big endian)
+    mov A, #0AAH
+    lcall putchar
+    mov A, #055H
+    lcall putchar
+
+    mov A, x+3
+    lcall putchar
+    mov A, x+2
+    lcall putchar
+    mov A, x+1
+    lcall putchar
+    mov A, x+0
+    lcall putchar
+
+    mov A, #0AH
+    lcall putchar
+    ret
 
 ;------------------------------------------------------------------------------------------------;
 ; Routine to initialize the ISR for timer 2 
@@ -230,23 +248,23 @@ Timer2_Init:
 Timer2_ISR:
 	push acc
 	push psw
-
 	clr TF2  ; Timer 2 doesn't clear TF2 automatically. Do it in ISR
-	cpl P1.1 ; To check the interrupt rate with oscilloscope. It must be precisely a 1 ms pulse.
+	; cpl P1.1 ; Optional debug pin toggle for scope (ensure it's not used elsewhere)
 
 ; FSM states timers
 	inc KEY1_DEB_timer
 	inc SEC_FSM_timer
-	
+
+	setb one_millisecond_flag ; set the one millisecond flag
+
 Timer2_ISR_done:
 	pop psw
 	pop acc
 	reti
 ;-----------------------------------------------------------------------------------------------;
 
-;-----------------------------------------------;
-; Display Function fo 7-segment displays		;
-;-----------------------------------------------;
+;-----------------------------------------------------------------------------------------------;
+; Display Function for 7-segment displays		
 
 ; Look-up table for the 7-seg displays. (Segments are turn on with zero) 
 T_7seg:
@@ -318,9 +336,8 @@ Hex_to_bcd_8bit:
 	mov R0, a
 	ret
 
-;-----------------------------------------------;
-; Display Function for LCD 						;
-;-----------------------------------------------;
+;------------------------------------------------------------------;
+; Display Function for LCD 						
 LCD_Display_Update_func:
 	push acc
 	mov a, Control_FSM_state
@@ -453,8 +470,73 @@ SEC_FSM_state3:
 	sjmp SEC_FSM_done
 IncCurrentTimeSec:
 	inc current_time_sec
+	cpl LEDRA.0 ; 1 Hz heartbeat LED
 SEC_FSM_done:
+	jnb one_millisecond_flag, not_handle_pwm
+	lcall pwm_wave_generator ; call pwm generator only when 1 ms flag is triggered
+	setb LEDRA.5
+not_handle_pwm:
+	ljmp loop
+
 ;-------------------------------------------------------------------------------
+; PWM
+; generate pwm signal for the ssr ; 1.5s period for the pwm signal; with 1 watt 
+; clarity for the pwm signal; input parameter: power_output; used buffers: x, y
+pwm_wave_generator:
+	clr one_millisecond_flag
+	clr mf
+	; move pwm counter value into x for comparison purpose
+	mov x, pwm_counter
+	mov x+1, pwm_counter+1
+	mov x+2, pwm_counter+2
+	mov x+3, pwm_counter+3
+
+	Load_Y(PWM_PERIOD)
+
+	; compare x(pwm_counter) and y(1499) if x=y, wrap x back to 0; else increase x by 1
+	lcall x_eq_y 
+	jb mf, wrap_pwm_counter
+	; x not equal 1499, increment by 1
+	Load_Y(1)
+	lcall add32
+	; update pwm_counter
+	mov pwm_counter, x
+	mov pwm_counter+1, x+1
+	mov pwm_counter+2, x+2
+	mov pwm_counter+3, x+3
+	sjmp set_pwm
+
+wrap_pwm_counter:
+	; x equal 1499, wrap to 0
+	Load_X(0)
+	mov pwm_counter, x
+	mov pwm_counter+1, x+1
+	mov pwm_counter+2, x+2
+	mov pwm_counter+3, x+3
+
+set_pwm:
+	; compare with power_output, if pwm counter smaller than power_output, set pwm pin high; else set pwm pin low
+	; load y with power output value
+	mov y, power_output
+	mov y+1, power_output+1
+	mov y+2, power_output+2
+	mov y+3, power_output+3
+
+	; compare x(pwm counter) with y(power output)
+	lcall x_lt_y
+	jb mf, set_pwm_high ; set pwm pin high if pwm counter smaller than power output
+	; set pwm pin low if pwm counter greater than power output
+	clr PWM_OUT
+	clr LEDRA.4
+	sjmp end_pwm_generator
+
+set_pwm_high:
+	setb PWM_OUT
+	setb LEDRA.4
+
+end_pwm_generator:
+	ret
+;-------------------------------------------------------------------------------;
 
 ;-------------------------------------------------------------------------------;
 ; main control fsm for the entire process
@@ -562,6 +644,17 @@ main:
 	; time counters initialization
 	mov current_time_sec, #0
 	mov current_time_minute, #0
+	; Initialize counter to zero
+    mov pwm_counter, #0
+	mov pwm_counter+1, #0
+	mov pwm_counter+2, #0
+	mov pwm_counter+3, #0
+
+	; Initialize power output
+	mov power_output+3, #0
+	mov power_output+2, #0
+	mov power_output+1, #02H
+	mov power_output, #0EEH ; (initilize to 750 for testing)
 
 	; Display initial message on LCD
 	Set_Cursor(1, 1)
