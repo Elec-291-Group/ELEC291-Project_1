@@ -116,7 +116,7 @@ TIMER_1_RELOAD EQU (256-((2*CLK)/(12*32*BAUD)))
 TIMER2_RATE    EQU 1000     ; 1000Hz, for a timer tick of 1ms
 TIMER2_RELOAD  EQU ((65536-(CLK/(12*TIMER2_RATE))))
 
-PWM_PERIOD     EQU 1500 ; 1.5s period
+PWM_PERIOD     EQU 1499 ; 1.5s period
 
 SOUND_OUT      EQU P1.5 ; Pin connected to the speaker
 
@@ -198,6 +198,31 @@ SendString_L1:
 	ret
 ; -----------------------------------------------------------------------------------------------;
 
+; serial debugging
+; send a four byte number via serial to laptop
+; need to be used with python script
+; content needed to be sent should be stored in the varaible x
+Send32:
+    ; data format: 0xAA, 0x55, x+3, x+2, x+1, x+0, 0xAH (big endian)
+    mov A, #0AAH
+    lcall putchar
+    mov A, #055H
+    lcall putchar
+
+    mov A, x+3
+    lcall putchar
+    mov A, x+2
+    lcall putchar
+    mov A, x+1
+    lcall putchar
+    mov A, x+0
+    lcall putchar
+
+    mov A, #0AH
+    lcall putchar
+    ret
+
+
 ;------------------------------------------------------------------------------------------------;
 ; Routine to initialize the ISR for timer 2 
 Timer2_Init:
@@ -222,7 +247,7 @@ Timer2_ISR:
 ; FSM states timers
 	inc KEY1_DEB_timer
 	inc SEC_FSM_timer
-	
+
 	setb one_millisecond_flag ; set the one millisecond flag
 
 Timer2_ISR_done:
@@ -357,10 +382,12 @@ main:
 	mov pwm_counter+3, #0
 
 	; Initialize power output
-	mov power_output, #0
-	mov power_output, #0
-	mov power_output, #02H
+	mov power_output+3, #0
+	mov power_output+2, #0
+	mov power_output+1, #02H
 	mov power_output, #0EEH ; (initilize to 750 for testing)
+
+	
 	; -------------------------------------------------------------------;
 
 loop:
@@ -457,25 +484,35 @@ not_handle_pwm:
 ;-----------------------------------
 pwm_wave_generator:
 	clr one_millisecond_flag
+	clr mf
 	; move pwm counter value into x for comparison purpose
 	mov x, pwm_counter
 	mov x+1, pwm_counter+1
 	mov x+2, pwm_counter+2
 	mov x+3, pwm_counter+3
 
-	Load_Y(1499)
+	Load_Y(PWM_PERIOD)
 
 	; compare x(pwm_counter) and y(1499) if x=y, wrap x back to 0; else increase x by 1
-	lcall x_eq_y
+	lcall x_eq_y 
 	jb mf, wrap_pwm_counter
 	; x not equal 1499, increment by 1
 	Load_Y(1)
 	lcall add32
+	; update pwm_counter
+	mov pwm_counter, x
+	mov pwm_counter+1, x+1
+	mov pwm_counter+2, x+2
+	mov pwm_counter+3, x+3
 	sjmp set_pwm
 
 wrap_pwm_counter:
 	; x equal 1499, wrap to 0
 	Load_X(0)
+	mov pwm_counter, x
+	mov pwm_counter+1, x+1
+	mov pwm_counter+2, x+2
+	mov pwm_counter+3, x+3
 
 set_pwm:
 	; compare with power_output, if pwm counter smaller than power_output, set pwm pin high; else set pwm pin low
@@ -498,10 +535,6 @@ set_pwm_high:
 	setb LEDRA.4
 
 end_pwm_generator:
-	mov pwm_counter, x
-	mov pwm_counter+1, x+1
-	mov pwm_counter+2, x+2
-	mov pwm_counter+3, x+3
 	ret
 
 END
