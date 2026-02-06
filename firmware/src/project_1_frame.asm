@@ -1,87 +1,69 @@
-; Project 1 Frame Code
+; Project 1
 ; CV-8052 microcontroller in DE10-Lite board
-
-
-; org applied to current segment, default is CSEG
-; ----------------------------------------------------------------------------------------------;
-; Reset vector & Interrupt Vectors
 
 ; Reset vector
 org 0x0000
     ljmp main
-
 ; External interrupt 0 vector
 org 0x0003
 	reti
-
 ; Timer/Counter 0 overflow interrupt vector
 org 0x000B
 	ljmp Timer0_ISR
-
 ; External interrupt 1 vector
 org 0x0013
 	reti
-
 ; Timer/Counter 1 overflow interrupt vector
 org 0x001B
 	reti
-
 ; Serial port receive/transmit interrupt vector
 org 0x0023 
 	reti
-	
 ; Timer/Counter 2 overflow interrupt vector
 org 0x002B
 	ljmp Timer2_ISR
-; ----------------------------------------------------------------------------------------------;
 
 ; ----------------------------------------------------------------------------------------------;
-; include 
+
+; includes
 $NOLIST
 $include(..\inc\MODMAX10)
 $include(..\inc\LCD_4bit_DE10Lite_no_RW.inc) ; LCD related functions and utility macros
 $include(..\inc\math32.asm) ; 
 $LIST
+
 ; ----------------------------------------------------------------------------------------------;
 
-; ---------------------------------------------------------------------------------------------;
 ; Data Segment 0x30 -- 0x7F  (overall 79d bytes available)
 dseg at 0x30
 current_time_sec:     ds 1
 current_time_minute:  ds 1
 current_time_hour:    ds 1
 
+; ----------------------------------------------------------------------------------------------;
+
 ; math32 buffer variables
 x:		ds	4
 y:		ds	4
 bcd:	ds	5
-
-current_temp: ds 4 ;
-soak_temp:    ds 4 ;
-reflow_temp:  ds 4 ;
-
-current_time: ds 4 ;
-soak_time:    ds 4 ;
-reflow_time:  ds 4 ;
-
-next_state:   ds 1 ;
-current_state:ds 1 ;
-
+current_temp: ds 4
+soak_temp:    ds 4 
+reflow_temp:  ds 4 
+current_time: ds 4 
+soak_time:    ds 4
+reflow_time:  ds 4 
+next_state:   ds 1
+current_state:ds 1
 power_output:  ds 4 ; power output value in watts
-
 KEY1_DEB_timer: ds 1
 SEC_FSM_timer: ds 1
-
 KEY1_DEB_state: ds 1
 SEC_FSM_state: ds 1
-
 pwm_counter: ds 4 ; counter for pwm (0-1500)
-
 ; 47d bytes used
-; ---------------------------------------------------------------------------------------------;
 
+; ---------------------------------------------------------------------------------------------;;
 
-; ---------------------------------------------------------------------------------------------;
 ; bit operation setb, clr, jb, and jnb
 bseg
 mf:		dbit 1 ; math32 sign
@@ -100,10 +82,8 @@ stop_signal: dbit 1
 start_signal: dbit 1
 
 Key1_flag: dbit 1
-; ---------------------------------------------------------------------------------------------;
 
-; Code start here
-; -----------------------------------------------------------------------------------------------------------------;
+; ---------------------------------------------------------------------------------------------;
 cseg
 CLK            EQU 33333333 ; Microcontroller system crystal frequency in Hz
 BAUD 		   EQU 57600
@@ -123,25 +103,21 @@ SOUND_OUT      EQU P1.5 ; Pin connected to the speaker
 PWM_OUT		   EQU P1.3 ; Pin connected to the ssr for outputing pwm signal
 
 ; These 'equ' must match the wiring between the DE10Lite board and the LCD!
-; P0 is in connector JPIO.  Check "CV-8052 Soft Processor in the DE10Lite Board: Getting
-; Started Guide" for the details.
-ELCD_RS equ P1.7
-; ELCD_RW equ Px.x ; Not used.  Connected to ground 
+; P0 is in connector JPIO.
+ELCD_RS equ P1.7 
 ELCD_E  equ P1.1
 ELCD_D4 equ P0.7
 ELCD_D5 equ P0.5
 ELCD_D6 equ P0.3
 ELCD_D7 equ P0.1
-
-;                     1234567890123456    <- This helps determine the location of the counter
 Initial_Message:  db 'initial message', 0
-
 ;----------------------------------------------------------------------------------------------;
 ; Timers Setting:
 ;   Timer 0: 2kHz square wave generation at P1.5 (speaker)
 ; 	Timer 1: Serial port baud rate 57600 generator
 ;  	Timer 2: 1ms interrupt for BCD counter increment/decrement
 ;----------------------------------------------------------------------------------------------;
+
 ; Routine to initialize the ISR for Timer 0 ;
 Timer0_Init:
 	mov a, TMOD
@@ -154,7 +130,6 @@ Timer0_Init:
     setb ET0  ; Enable timer 0 interrupt
     setb TR0  ; Start timer 0
 	ret
-
 ; ISR for timer 0.  Set to execute every 1/4096Hz 
 ; to generate a 2048 Hz square wave at pin P1.5 
 Timer0_ISR:
@@ -163,9 +138,9 @@ Timer0_ISR:
 	mov TL0, #low(TIMER0_RELOAD)
 	cpl SOUND_OUT ; Connect speaker to P1.5
 	reti
-;-----------------------------------------------------------------------------------------------;
 
 ; -----------------------------------------------------------------------------------------------;
+
 ; Routine to initialize the serial port at 57600 baud (Timer 1 in mode 2)
 Initialize_Serial_Port:
 	; Configure serial port and baud rate
@@ -196,6 +171,7 @@ SendString:
     sjmp SendString  
 SendString_L1:
 	ret
+
 ; -----------------------------------------------------------------------------------------------;
 
 ; serial debugging
@@ -222,8 +198,8 @@ Send32:
     lcall putchar
     ret
 
-
 ;------------------------------------------------------------------------------------------------;
+
 ; Routine to initialize the ISR for timer 2 
 Timer2_Init:
 	mov T2CON, #0 ; Stop timer/counter.  Autoreload mode.
@@ -254,10 +230,10 @@ Timer2_ISR_done:
 	pop psw
 	pop acc
 	reti
-;-----------------------------------------------------------------------------------------------;
 
+;-----------------------------------------------------------------------------------------------;
 ;-----------------------------------------------;
-; Display Function fo 7-segment displays		;
+; Display Function for 7-segment displays		;
 ;-----------------------------------------------;
 
 ; Look-up table for the 7-seg displays. (Segments are turn on with zero) 
@@ -334,14 +310,11 @@ Hex_to_bcd_8bit:
 ; Display Function for LCD 						;
 ;-----------------------------------------------;
 
+;...
 
+;-----------------------------------------------------------------------------------------------;
 
-
-;---------------------------- -----;
-;         Main program.           ;
-;---------------------------------;
 main:
-	; -------------------------------------------------------------------;
 	; Initialization
     mov SP, #0x7F
     lcall Timer0_Init
@@ -387,12 +360,11 @@ main:
 	mov power_output+1, #02H
 	mov power_output, #0EEH ; (initilize to 750 for testing)
 
-	
-	; -------------------------------------------------------------------;
+;-----------------------------------------------------------------------------------------------;
 
 loop:
-;-------------------------------------------------------------------------------
-; non-blocking state machine for KEY1 debounce
+
+;non-blocking state machine for KEY1 debounce
 	mov a, KEY1_DEB_state
 KEY1_DEB_state0:
 	cjne a, #0, KEY1_DEB_state1
@@ -421,10 +393,10 @@ KEY1_DEB_state3:
 	setb Key1_flag ; Suscesfully detected a valid KEY1 press/release
 	mov KEY1_DEB_state, #0	
 KEY1_DEB_done:
-;-------------------------------------------------------------------------------
 
 ;-------------------------------------------------------------------------------
-; non-blocking FSM for the one second counter
+
+;FSM Logic
 	mov a, SEC_FSM_state
 SEC_FSM_state0:
 	cjne a, #0, SEC_FSM_state1
@@ -464,24 +436,19 @@ IncCurrentTimeSec:
 	inc current_time_sec
 	cpl LEDRA.0 ; 1 Hz heartbeat LED
 SEC_FSM_done:
-;-------------------------------------------------------------------------------
-
 	jnb one_millisecond_flag, not_handle_pwm
 	lcall pwm_wave_generator ; call pwm generator only when 1 ms flag is triggered
-
 	setb LEDRA.5
-
 not_handle_pwm:
 	ljmp loop
 
+;-------------------------------------------------------------------------------
+; PWM
+;-------------------------------------------------------------------------------
+; generate pwm signal for the ssr ; 1.5s period for the pwm signal; with 1 watt 
+; clarity for the pwm signal; input parameter: power_output; used buffers: x, y
+;-------------------------------------------------------------------------------
 
-;----------------------------------
-; generate pwm signal for the ssr 
-; 1.5s period for the pwm signal
-; with 1 watt clarity for the pwm signal
-; input parameter: power_output
-; used buffers: x, y
-;-----------------------------------
 pwm_wave_generator:
 	clr one_millisecond_flag
 	clr mf
@@ -537,4 +504,5 @@ set_pwm_high:
 end_pwm_generator:
 	ret
 
+;-------------------------------------------------------------------------------
 END
