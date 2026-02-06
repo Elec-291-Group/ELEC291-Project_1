@@ -148,12 +148,12 @@ Timer0_Init:
 	ret
 
 ; ISR for timer 0.  Set to execute every 1/4096Hz 
-; to generate a 2048 Hz square wave at pin P3.7 
+; to generate a 2048 Hz square wave at pin P1.5 
 Timer0_ISR:
 	;clr TF0  ; According to the data sheet this is done for us already.
 	mov TH0, #high(TIMER0_RELOAD) ; Timer 0 doesn't have autoreload in the CV-8052
 	mov TL0, #low(TIMER0_RELOAD)
-	cpl SOUND_OUT ; Connect speaker to P3.7!
+	cpl SOUND_OUT ; Connect speaker to P1.5
 	reti
 ;-----------------------------------------------------------------------------------------------;
 
@@ -206,8 +206,10 @@ Timer2_Init:
 
 ; ISR for timer 2.  Runs every 1 ms ;
 Timer2_ISR:
+	push acc
+	push psw
 	clr TF2  ; Timer 2 doesn't clear TF2 automatically. Do it in ISR
-	cpl P1.1 ; To check the interrupt rate with oscilloscope. It must be precisely a 1 ms pulse.
+	; cpl P1.1 ; Optional debug pin toggle for scope (ensure it's not used elsewhere)
 
 ; FSM states timers
 	inc KEY1_DEB_timer
@@ -299,7 +301,8 @@ Hex_to_bcd_8bit:
 
 
 
-;---------------------------------;
+
+;---------------------------- -----;
 ;         Main program.           ;
 ;---------------------------------;
 main:
@@ -413,6 +416,7 @@ SEC_FSM_state3:
 	sjmp SEC_FSM_done
 IncCurrentTimeSec:
 	inc current_time_sec
+	cpl LEDRA.0 ; 1 Hz heartbeat LED
 SEC_FSM_done:
 ;-------------------------------------------------------------------------------
 
