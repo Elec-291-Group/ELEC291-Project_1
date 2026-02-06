@@ -60,6 +60,7 @@ SEC_FSM_timer: ds 1
 KEY1_DEB_state: ds 1
 SEC_FSM_state: ds 1
 pwm_counter: ds 4 ; counter for pwm (0-1500)
+soak_temp_diff: ds 4 ; temperature difference between target soak temp and current oven temp 
 ; 47d bytes used
 
 ; ---------------------------------------------------------------------------------------------;;
@@ -101,6 +102,10 @@ PWM_PERIOD     EQU 1499 ; 1.5s period
 SOUND_OUT      EQU P1.5 ; Pin connected to the speaker
 
 PWM_OUT		   EQU P1.3 ; Pin connected to the ssr for outputing pwm signal
+
+MAX_POWER	   EQU 1500 ; max oven power
+NO_POWER	   EQU 0    ; no power
+BASE_POWER     EQU (MAX_POWER/5) ; 20% base power for state 2, 4
 
 ; These 'equ' must match the wiring between the DE10Lite board and the LCD!
 ; P0 is in connector JPIO.
@@ -357,8 +362,8 @@ main:
 	; Initialize power output
 	mov power_output+3, #0
 	mov power_output+2, #0
-	mov power_output+1, #02H
-	mov power_output, #0EEH ; (initilize to 750 for testing)
+	mov power_output+1, #0
+	mov power_output, #0 ; initilize to 0
 
 ;-----------------------------------------------------------------------------------------------;
 
@@ -441,6 +446,68 @@ SEC_FSM_done:
 	setb LEDRA.5
 not_handle_pwm:
 	ljmp loop
+
+
+;-------------------------------------------------------------------------------
+; power_control
+;-------------------------------------------------------------------------------
+; Determine the power output based on current state and current temperature 
+; input parameter: current_state
+;-------------------------------------------------------------------------------
+
+power_control:
+	mov a, current_state
+
+state0_power_control:
+	; idle
+	; 0% power
+	cjne a, #0, state1_power_control
+	mov power_output, NO_POWER
+	mov power_output+1, NO_POWER
+	mov power_output+2, NO_POWER
+	mov power_output+3, NO_POWER
+	ljmp power_control_done
+
+state1_power_control:
+	; ramp to soak, ramp to ~150C
+	; 100% power
+	cjne a, #1, state2_power_control
+	mov power_output, #low(MAX_POWER)
+	mov power_output+1, #high(MAX_POWER)
+	ljmp power_control_done
+
+state2_power_control:
+	; soak period, hold at 150C
+	; 20% base power
+	cjne a, #2, state3_power_control
+	; move soak_temp to x
+	mov x, soak_temp
+	mov x+1, soak_temp+1
+	mov x+2, soak_temp+2
+	mov x+3, soak_temp+3
+	; move current_temp to y
+	mov y, current_temp
+	mov y+1, current_temp+1
+	mov y+2, current_temp+2
+	mov y+3, current_temp+3
+	; soak_temp - current_temp
+	lcall sub32
+	mov soak_temp_diff, x
+	mov soak_temp_diff+1, x+1
+	mov soak_temp_diff+2, x+2
+	mov soak_temp_diff+3, x+3
+	
+
+state3_power_control:
+	cjne a, #3, state4_power_control
+
+state4_power_control:
+	cjne a, #5, state5_power_control
+
+power_control_done:
+	ret
+
+
 
 ;-------------------------------------------------------------------------------
 ; PWM
