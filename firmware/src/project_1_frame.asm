@@ -1,6 +1,7 @@
 ; Project 1
 ; CV-8052 microcontroller in DE10-Lite board
 
+; ----------------------------------------------------------------------------------------------;
 ; Reset vector
 org 0x0000
     ljmp main
@@ -22,48 +23,48 @@ org 0x0023
 ; Timer/Counter 2 overflow interrupt vector
 org 0x002B
 	ljmp Timer2_ISR
-
 ; ----------------------------------------------------------------------------------------------;
 
+; ----------------------------------------------------------------------------------------------;
 ; includes
 $NOLIST
 $include(..\inc\MODMAX10)
 $include(..\inc\LCD_4bit_DE10Lite_no_RW.inc) ; LCD related functions and utility macros
 $include(..\inc\math32.asm) ; 
 $LIST
-
 ; ----------------------------------------------------------------------------------------------;
 
+; ----------------------------------------------------------------------------------------------;
 ; Data Segment 0x30 -- 0x7F  (overall 79d bytes available)
 dseg at 0x30
 current_time_sec:     ds 1
 current_time_minute:  ds 1
-current_time_hour:    ds 1
-
-; ----------------------------------------------------------------------------------------------;
 
 ; math32 buffer variables
 x:		ds	4
 y:		ds	4
 bcd:	ds	5
-current_temp: ds 4
-soak_temp:    ds 4 
-reflow_temp:  ds 4 
-current_time: ds 4 
-soak_time:    ds 4
-reflow_time:  ds 4 
-next_state:   ds 1
-current_state:ds 1
-power_output:  ds 4 ; power output value in watts
-KEY1_DEB_timer: ds 1
-SEC_FSM_timer: ds 1
-KEY1_DEB_state: ds 1
-SEC_FSM_state: ds 1
+
+current_temp: ds 4 ;
+soak_temp:    ds 4 ;
+reflow_temp:  ds 4 ;
+
+current_time: ds 4 ;
+soak_time:    ds 4 ;
+reflow_time:  ds 4 ;
+
+power_output:  ds 4 ;
 pwm_counter: ds 4 ; counter for pwm (0-1500)
-; 47d bytes used
 
-; ---------------------------------------------------------------------------------------------;;
+KEY1_DEB_timer: ds 1
+SEC_FSM_timer:  ds 1
+KEY1_DEB_state:    ds 1
+SEC_FSM_state: 	   ds 1
+Control_FSM_state: ds 1 
+; 46d bytes used
+; ---------------------------------------------------------------------------------------------;
 
+; ---------------------------------------------------------------------------------------------;
 ; bit operation setb, clr, jb, and jnb
 bseg
 mf:		dbit 1 ; math32 sign
@@ -80,11 +81,17 @@ reflow_time_reached: dbit 1
 reset_signal: dbit 1
 stop_signal: dbit 1
 start_signal: dbit 1
+config_finish_signal: dbit 1
 
 Key1_flag: dbit 1
 
 tc_missing_abort: dbit 1   ; 1 = abort because temp < 50C after 60s
 tc_startup_window: dbit 1   ; 1 = still within first 60 seconds of the run
+PB0_flag: dbit 1 ; start entire program
+PB1_flag: dbit 1 ; start soak
+PB2_flag: dbit 1 ; pause process
+; 11 bits used
+; ---------------------------------------------------------------------------------------------;
 
 ; ---------------------------------------------------------------------------------------------;
 cseg
@@ -106,14 +113,39 @@ SOUND_OUT      EQU P1.5 ; Pin connected to the speaker
 PWM_OUT		   EQU P1.3 ; Pin connected to the ssr for outputing pwm signal
 
 ; These 'equ' must match the wiring between the DE10Lite board and the LCD!
-; P0 is in connector JPIO.
-ELCD_RS equ P1.7 
-ELCD_E  equ P1.1
-ELCD_D4 equ P0.7
-ELCD_D5 equ P0.5
-ELCD_D6 equ P0.3
-ELCD_D7 equ P0.1
+; P0 is in connector JPIO.  Check "CV-8052 Soft Processor in the DE10Lite Board: Getting
+; Started Guide" for the details.
+ELCD_RS equ P3.7
+ELCD_RW equ P3.5
+ELCD_E  equ P3.3
+ELCD_D4 equ P3.1
+ELCD_D5 equ P2.7
+ELCD_D6 equ P2.5
+ELCD_D7 equ P2.3
+
+;                     1234567890123456 <-- 16 characters per line LCD
 Initial_Message:  db 'initial message', 0
+String_state0_1:  db 'Welcome        ', 0
+String_state0_2:  db 'Press PB0      ', 0
+
+;                       1234567890123456
+String_state1:      db 'Set Parameters ', 0
+String_soak_temp:   db 'Soak Temp:', 0
+String_reflow_temp: db 'Reflow Temp:', 0
+String_soak_time:   db 'Soak Time:', 0
+String_reflow_time: db 'Reflow Time:', 0
+
+;                     1234567890123456
+String_state2:    db 'Ramp to Soak   ', 0
+String_state3:    db 'Soak Phase     ', 0
+String_state4:    db 'Ramp to Reflow ', 0
+String_state5:    db 'Reflow Phase   ', 0
+String_state6:    db 'Cooling        ', 0
+String_state7:    db 'Process Done   ', 0
+
+String_Blank:    db '                ', 0
+
+
 ;----------------------------------------------------------------------------------------------;
 ; Timers Setting:
 ;   Timer 0: 2kHz square wave generation at P1.5 (speaker)
@@ -202,7 +234,6 @@ Send32:
     ret
 
 ;------------------------------------------------------------------------------------------------;
-
 ; Routine to initialize the ISR for timer 2 
 Timer2_Init:
 	mov T2CON, #0 ; Stop timer/counter.  Autoreload mode.
@@ -233,11 +264,10 @@ Timer2_ISR_done:
 	pop psw
 	pop acc
 	reti
+;-----------------------------------------------------------------------------------------------;
 
 ;-----------------------------------------------------------------------------------------------;
-;-----------------------------------------------;
-; Display Function for 7-segment displays		;
-;-----------------------------------------------;
+; Display Function for 7-segment displays		
 
 ; Look-up table for the 7-seg displays. (Segments are turn on with zero) 
 T_7seg:
@@ -309,59 +339,65 @@ Hex_to_bcd_8bit:
 	mov R0, a
 	ret
 
-;-----------------------------------------------;
-; Display Function for LCD 						;
-;-----------------------------------------------;
+;------------------------------------------------------------------;
+; Display Function for LCD 						
+LCD_Display_Update_func:
+	push acc
+	mov a, Control_FSM_state
 
-;...
+LCD_Display_Update_0:
+	cjne a, #0, LCD_Display_Update_1
+	Set_Cursor(1,1)
+	Send_Constant_String(#String_state0_1)
+	Set_Cursor(2,1)
+	Send_Constant_String(#String_state0_2)
+	ljmp LCD_Display_Update_done
 
-;-----------------------------------------------------------------------------------------------;
+LCD_Display_Update_1:
+	cjne a, #1, LCD_Display_Update_2
+	Set_Cursor(1,1)
+	Send_Constant_String(#String_state1)
+	ljmp LCD_Display_Update_done
 
-main:
-	; Initialization
-    mov SP, #0x7F
-    lcall Timer0_Init
-    lcall Timer2_Init
-	lcall ELCD_4BIT
-	lcall Initialize_Serial_Port
+LCD_Display_Update_2:
+	cjne a, #2, LCD_Display_Update_3
+	Set_Cursor(1,1)
+	Send_Constant_String(#String_state2)
+	ljmp LCD_Display_Update_done
 
-	; We use the pins of P0 to control the LCD.  Configure as outputs.
-    mov P0MOD, #01111111b ; P0.0 to P0.6 are outputs.  ('1' makes the pin output)
-    ; We use pins P1.5 and P1.1 as outputs also.  Configure accordingly.
-    mov P1MOD, #00101010b ; P1.5, P1.1, P1.3 are outputs
-    mov P2MOD, #0xff
-    mov P3MOD, #0xff
+LCD_Display_Update_3:
+	cjne a, #3, LCD_Display_Update_4
+	Set_Cursor(1,1)
+	Send_Constant_String(#String_state3)
+	ljmp LCD_Display_Update_done
 
-    ; Turn off all the LEDs
-    mov LEDRA, #0 ; LEDRA is bit addressable
-    mov LEDRB, #0 ; LEDRB is NOT bit addresable
+LCD_Display_Update_4:
+	cjne a, #4, LCD_Display_Update_5
+	Set_Cursor(1,1)
+	Send_Constant_String(#String_state4)
+	ljmp LCD_Display_Update_done
 
-	; Enable Global interrupts
-    setb EA  
+LCD_Display_Update_5:
+	cjne a, #5, LCD_Display_Update_6
+	Set_Cursor(1,1)
+	Send_Constant_String(#String_state5)
+	ljmp LCD_Display_Update_done
 
-	; FSM initial states
-	mov KEY1_DEB_state, #0
-	mov SEC_FSM_state, #0
+LCD_Display_Update_6:
+	cjne a, #6, LCD_Display_Update_7
+	Set_Cursor(1,1)
+	Send_Constant_String(#String_state6)
+	ljmp LCD_Display_Update_done
 
-	; FSM timers initialization
-	mov KEY1_DEB_timer, #0
-	mov SEC_FSM_timer, #0
+LCD_Display_Update_7:
+	cjne a, #7, LCD_Display_Update_done
+	Set_Cursor(1,1)
+	Send_Constant_String(#String_state7)
+	ljmp LCD_Display_Update_done
 
-	; Display initial message on LCD
-	Set_Cursor(1, 1)
-    Send_Constant_String(#Initial_Message)
-
-	; Initialize counter to zero
-    mov pwm_counter, #0
-	mov pwm_counter+1, #0
-	mov pwm_counter+2, #0
-	mov pwm_counter+3, #0
-
-	; Initialize power output
-	mov power_output+3, #0
-	mov power_output+2, #0
-	mov power_output+1, #02H
-	mov power_output, #0EEH ; (initilize to 750 for testing)
+LCD_Display_Update_done:
+	pop acc
+	ret
 
 	; Initialize abort action condition
 	clr  tc_missing_abort
@@ -400,10 +436,12 @@ KEY1_DEB_state3:
 	setb Key1_flag ; Suscesfully detected a valid KEY1 press/release
 	mov KEY1_DEB_state, #0	
 KEY1_DEB_done:
+	ret
+; ------------------------------------------------------------------------------
 
 ;-------------------------------------------------------------------------------
-
-;FSM Logic
+; non-blocking FSM for the one second counter
+SEC_FSM:
 	mov a, SEC_FSM_state
 SEC_FSM_state0:
 	cjne a, #0, SEC_FSM_state1
@@ -451,11 +489,8 @@ not_handle_pwm:
 
 ;-------------------------------------------------------------------------------
 ; PWM
-;-------------------------------------------------------------------------------
 ; generate pwm signal for the ssr ; 1.5s period for the pwm signal; with 1 watt 
 ; clarity for the pwm signal; input parameter: power_output; used buffers: x, y
-;-------------------------------------------------------------------------------
-
 pwm_wave_generator:
 	clr one_millisecond_flag
 	clr mf
@@ -510,8 +545,163 @@ set_pwm_high:
 
 end_pwm_generator:
 	ret
+;-------------------------------------------------------------------------------;
 
-;-------------------------------------------------------------------------------
+;-------------------------------------------------------------------------------;
+; main control fsm for the entire process
+Control_FSM:
+	mov a, Control_FSM_state
+	sjmp Control_FSM_state0
+
+Control_FSM_state0_a:
+	mov Control_FSM_state, #0
+Control_FSM_state0:
+	cjne a, #0, Control_FSM_state1
+	jbc PB0_flag, Control_FSM_state1_a
+	sjmp Control_FSM_done
+
+Control_FSM_state1_a:
+	inc Control_FSM_state
+Control_FSM_state1:
+	cjne a, #1, Control_FSM_state2
+	jbc PB1_flag, Control_FSM_state1_b
+	sjmp Control_FSM_done
+Control_FSM_state1_b:
+	jbc config_finish_signal, Control_FSM_state2_a
+	sjmp Control_FSM_done
+
+Control_FSM_state2_a:
+	inc Control_FSM_state
+Control_FSM_state2:
+	cjne a, #2, Control_FSM_state3
+	jbc PB2_flag, Control_FSM_state6_a
+	jbc soak_temp_reached, Control_FSM_state3_a
+	sjmp Control_FSM_done
+
+Control_FSM_state3_a:
+	inc Control_FSM_state
+Control_FSM_state3:
+	cjne a, #3, Control_FSM_state4
+	jbc PB2_flag, Control_FSM_state6_a
+	jbc soak_time_reached, Control_FSM_state4_a
+	sjmp Control_FSM_done
+
+Control_FSM_state4_a:
+	inc Control_FSM_state	
+Control_FSM_state4:
+	cjne a, #4, Control_FSM_state5
+	jbc PB2_flag, Control_FSM_state6_a
+	jbc reflow_temp_reached, Control_FSM_state5_a
+	sjmp Control_FSM_done
+
+Control_FSM_state5_a:
+	inc Control_FSM_state
+Control_FSM_state5:
+	cjne a, #5, Control_FSM_state6
+	jbc PB2_flag, Control_FSM_state6_a
+	jbc reflow_time_reached, Control_FSM_state6_a
+	sjmp Control_FSM_done
+
+Control_FSM_state6_a:
+	inc Control_FSM_state
+Control_FSM_state6:
+	cjne a, #6, Control_FSM_done
+	jbc cooling_temp_reached, Control_FSM_state7_a
+	sjmp Control_FSM_done
+
+Control_FSM_state7_a:
+	inc Control_FSM_state
+Control_FSM_state7:
+	cjne a, #7, Control_FSM_done
+	jbc PB0_flag, Control_FSM_state0_a
+	sjmp Control_FSM_done
+
+Control_FSM_done:
+	ret
+;-------------------------------------------------------------------------------;
+
+
+;---------------------------------;
+;         Main program.           ;
+;---------------------------------;
+main:
+	; -------------------------------------------------------------------;
+	; Initialization
+    mov SP, #0x7F
+
+	; We use the pins of P0 to control the LCD.  Configure as outputs.
+    mov P0MOD, #01111111b ; P0.0 to P0.6 are outputs.  ('1' makes the pin output)
+    ; We use pins P1.5 and P1.1 as outputs also.  Configure accordingly.
+    mov P1MOD, #00100010b ; P1.5 and P1.1 are outputs
+    mov P2MOD, #0xff
+    mov P3MOD, #0xff
+
+    ; Turn off all the LEDs
+    mov LEDRA, #0 ; LEDRA is bit addressable
+    mov LEDRB, #0 ; LEDRB is NOT bit addresable
+
+	; Enable Global interrupts
+    setb EA  
+
+	; FSM initial states
+	mov KEY1_DEB_state, #0
+	mov SEC_FSM_state, #0
+	mov Control_FSM_state, #0
+	; FSM timers initialization
+	mov KEY1_DEB_timer, #0
+	mov SEC_FSM_timer, #0
+	; time counters initialization
+	mov current_time_sec, #0
+	mov current_time_minute, #0
+	; Initialize counter to zero
+    mov pwm_counter, #0
+	mov pwm_counter+1, #0
+	mov pwm_counter+2, #0
+	mov pwm_counter+3, #0
+
+	; Initialize power output
+	mov power_output+3, #0
+	mov power_output+2, #0
+	mov power_output+1, #02H
+	mov power_output, #0EEH ; (initilize to 750 for testing)
+
+	; Display initial message on LCD
+	Set_Cursor(1, 1)
+    Send_Constant_String(#Initial_Message)
+
+	; Clear all the flags
+	clr PB0_flag
+	clr PB1_flag
+	clr PB2_flag
+	clr one_second_flag
+	clr config_finish_signal
+	clr soak_temp_reached
+	clr soak_time_reached
+	clr reflow_temp_reached
+	clr reflow_time_reached
+	clr cooling_temp_reached
+
+	lcall Timer0_Init
+    lcall Timer2_Init
+	lcall ELCD_4BIT
+	lcall Initialize_Serial_Port
+
+loop:
+	; Check the FSM for KEY1 debounce
+	lcall KEY1_DEB
+
+	; Check the FSM for one second counter
+	lcall SEC_FSM
+
+	; Check the FSM for the overall control flow of the reflow process
+	lcall Control_FSM
+
+	; Update the LCD display based on the current state
+	lcall LCD_Display_Update_func
+
+	; After initialization the program stays in this 'forever' loop
+	ljmp loop
+
 
 ;===============================================================================
 ; Temp_Compare
