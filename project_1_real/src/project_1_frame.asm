@@ -39,7 +39,7 @@ org 0x002B
 ; include 
 $NOLIST
 $include(..\inc\MODMAX10)
-$include(..\inc\LCD_4bit_DE10Lite.inc) ; LCD related functions and utility macros
+$include(..\inc\LCD_4bit_DE10Lite_no_RW.inc) ; LCD related functions and utility macros
 $include(..\inc\math32.asm) ; 
 $LIST
 ; ----------------------------------------------------------------------------------------------;
@@ -67,13 +67,16 @@ reflow_time:  ds 4 ;
 next_state:   ds 1 ;
 current_state:ds 1 ;
 
-power_output:  ds 4 ;
+power_output:  ds 4 ; power output value in watts
 
 KEY1_DEB_timer: ds 1
 SEC_FSM_timer: ds 1
 
 KEY1_DEB_state: ds 1
 SEC_FSM_state: ds 1
+
+pwm_counter: ds 4 ; counter for pwm (0-1500)
+
 ; 47d bytes used
 ; ---------------------------------------------------------------------------------------------;
 
@@ -83,6 +86,7 @@ SEC_FSM_state: ds 1
 bseg
 mf:		dbit 1 ; math32 sign
 one_second_flag: dbit 1
+one_millisecond_flag: dbit 0 ; one_millisecond_flag for pwm signal
 
 soak_temp_reached: dbit 1
 reflow_temp_reached: dbit 1
@@ -112,18 +116,22 @@ TIMER_1_RELOAD EQU (256-((2*CLK)/(12*32*BAUD)))
 TIMER2_RATE    EQU 1000     ; 1000Hz, for a timer tick of 1ms
 TIMER2_RELOAD  EQU ((65536-(CLK/(12*TIMER2_RATE))))
 
+PWM_PERIOD     EQU 1499 ; 1.5s period
+
 SOUND_OUT      EQU P1.5 ; Pin connected to the speaker
+
+PWM_OUT		   EQU P1.3 ; Pin connected to the ssr for outputing pwm signal
 
 ; These 'equ' must match the wiring between the DE10Lite board and the LCD!
 ; P0 is in connector JPIO.  Check "CV-8052 Soft Processor in the DE10Lite Board: Getting
 ; Started Guide" for the details.
-ELCD_RS equ P3.7
-ELCD_RW equ P3.5
-ELCD_E  equ P3.3
-ELCD_D4 equ P3.1
-ELCD_D5 equ P2.7
-ELCD_D6 equ P2.5
-ELCD_D7 equ P2.3
+ELCD_RS equ P1.7
+; ELCD_RW equ Px.x ; Not used.  Connected to ground 
+ELCD_E  equ P1.1
+ELCD_D4 equ P0.7
+ELCD_D5 equ P0.5
+ELCD_D6 equ P0.3
+ELCD_D7 equ P0.1
 
 ;                     1234567890123456    <- This helps determine the location of the counter
 Initial_Message:  db 'initial message', 0
@@ -190,6 +198,31 @@ SendString_L1:
 	ret
 ; -----------------------------------------------------------------------------------------------;
 
+; serial debugging
+; send a four byte number via serial to laptop
+; need to be used with python script
+; content needed to be sent should be stored in the varaible x
+Send32:
+    ; data format: 0xAA, 0x55, x+3, x+2, x+1, x+0, 0xAH (big endian)
+    mov A, #0AAH
+    lcall putchar
+    mov A, #055H
+    lcall putchar
+
+    mov A, x+3
+    lcall putchar
+    mov A, x+2
+    lcall putchar
+    mov A, x+1
+    lcall putchar
+    mov A, x+0
+    lcall putchar
+
+    mov A, #0AH
+    lcall putchar
+    ret
+
+
 ;------------------------------------------------------------------------------------------------;
 ; Routine to initialize the ISR for timer 2 
 Timer2_Init:
@@ -214,7 +247,9 @@ Timer2_ISR:
 ; FSM states timers
 	inc KEY1_DEB_timer
 	inc SEC_FSM_timer
-	
+
+	setb one_millisecond_flag ; set the one millisecond flag
+
 Timer2_ISR_done:
 	pop psw
 	pop acc
@@ -296,7 +331,7 @@ Hex_to_bcd_8bit:
 	ret
 
 ;-----------------------------------------------;
-; Display Function fo LCD 						;
+; Display Function for LCD 						;
 ;-----------------------------------------------;
 
 
@@ -317,7 +352,7 @@ main:
 	; We use the pins of P0 to control the LCD.  Configure as outputs.
     mov P0MOD, #01111111b ; P0.0 to P0.6 are outputs.  ('1' makes the pin output)
     ; We use pins P1.5 and P1.1 as outputs also.  Configure accordingly.
-    mov P1MOD, #00100010b ; P1.5 and P1.1 are outputs
+    mov P1MOD, #00101010b ; P1.5, P1.1, P1.3 are outputs
     mov P2MOD, #0xff
     mov P3MOD, #0xff
 
@@ -341,7 +376,18 @@ main:
     Send_Constant_String(#Initial_Message)
 
 	; Initialize counter to zero
-    
+    mov pwm_counter, #0
+	mov pwm_counter+1, #0
+	mov pwm_counter+2, #0
+	mov pwm_counter+3, #0
+
+	; Initialize power output
+	mov power_output+3, #0
+	mov power_output+2, #0
+	mov power_output+1, #02H
+	mov power_output, #0EEH ; (initilize to 750 for testing)
+
+	
 	; -------------------------------------------------------------------;
 
 loop:
@@ -420,8 +466,75 @@ IncCurrentTimeSec:
 SEC_FSM_done:
 ;-------------------------------------------------------------------------------
 
+	jnb one_millisecond_flag, not_handle_pwm
+	lcall pwm_wave_generator ; call pwm generator only when 1 ms flag is triggered
+
+	setb LEDRA.5
+
+not_handle_pwm:
 	ljmp loop
 
 
+;----------------------------------
+; generate pwm signal for the ssr 
+; 1.5s period for the pwm signal
+; with 1 watt clarity for the pwm signal
+; input parameter: power_output
+; used buffers: x, y
+;-----------------------------------
+pwm_wave_generator:
+	clr one_millisecond_flag
+	clr mf
+	; move pwm counter value into x for comparison purpose
+	mov x, pwm_counter
+	mov x+1, pwm_counter+1
+	mov x+2, pwm_counter+2
+	mov x+3, pwm_counter+3
+
+	Load_Y(PWM_PERIOD)
+
+	; compare x(pwm_counter) and y(1499) if x=y, wrap x back to 0; else increase x by 1
+	lcall x_eq_y 
+	jb mf, wrap_pwm_counter
+	; x not equal 1499, increment by 1
+	Load_Y(1)
+	lcall add32
+	; update pwm_counter
+	mov pwm_counter, x
+	mov pwm_counter+1, x+1
+	mov pwm_counter+2, x+2
+	mov pwm_counter+3, x+3
+	sjmp set_pwm
+
+wrap_pwm_counter:
+	; x equal 1499, wrap to 0
+	Load_X(0)
+	mov pwm_counter, x
+	mov pwm_counter+1, x+1
+	mov pwm_counter+2, x+2
+	mov pwm_counter+3, x+3
+
+set_pwm:
+	; compare with power_output, if pwm counter smaller than power_output, set pwm pin high; else set pwm pin low
+	; load y with power output value
+	mov y, power_output
+	mov y+1, power_output+1
+	mov y+2, power_output+2
+	mov y+3, power_output+3
+
+	; compare x(pwm counter) with y(power output)
+	lcall x_lt_y
+	jb mf, set_pwm_high ; set pwm pin high if pwm counter smaller than power output
+	; set pwm pin low if pwm counter greater than power output
+	clr PWM_OUT
+	clr LEDRA.4
+	sjmp end_pwm_generator
+
+set_pwm_high:
+	setb PWM_OUT
+	setb LEDRA.4
+
+end_pwm_generator:
+	ret
 
 END
