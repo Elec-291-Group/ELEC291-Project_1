@@ -173,11 +173,11 @@ SendString_L1:
 	ret
 
 ; -----------------------------------------------------------------------------------------------;
-
 ; serial debugging
 ; send a four byte number via serial to laptop
 ; need to be used with python script
 ; content needed to be sent should be stored in the varaible x
+;-----------------------------------------------------------------------------------------------;
 Send32:
     ; data format: 0xAA, 0x55, x+3, x+2, x+1, x+0, 0xAH (big endian)
     mov A, #0AAH
@@ -232,9 +232,8 @@ Timer2_ISR_done:
 	reti
 
 ;-----------------------------------------------------------------------------------------------;
-;-----------------------------------------------;
-; Display Function for 7-segment displays		;
-;-----------------------------------------------;
+; Display Function for 7-segment displays	
+;-----------------------------------------------------------------------------------------------;
 
 ; Look-up table for the 7-seg displays. (Segments are turn on with zero) 
 T_7seg:
@@ -361,10 +360,21 @@ main:
 	mov power_output, #0EEH ; (initilize to 750 for testing)
 
 ;-----------------------------------------------------------------------------------------------;
+; Main loop (keeps original entry label for compatibility)
+;-----------------------------------------------------------------------------------------------;
+Key1_Debounce_FSM:
+Main_Loop:
+	lcall Do_Key1_Debounce
+	lcall Do_Second_FSM
+	lcall Do_PWM_Tick
+	ljmp Main_Loop
 
-loop:
-
-;non-blocking state machine for KEY1 debounce
+;-----------------------------------------------------------------------------------------------;
+; KEY1 Debounce FSM
+; Produces: Key1_flag = 1 when a valid press+release occurs
+;-----------------------------------------------------------------------------------------------;
+Do_Key1_Debounce:
+	; non-blocking state machine for KEY1 debounce
 	mov a, KEY1_DEB_state
 KEY1_DEB_state0:
 	cjne a, #0, KEY1_DEB_state1
@@ -393,10 +403,13 @@ KEY1_DEB_state3:
 	setb Key1_flag ; Suscesfully detected a valid KEY1 press/release
 	mov KEY1_DEB_state, #0	
 KEY1_DEB_done:
+	ret
 
-;-------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------;
+; One-Second FSM (250 ms x4)
+;-----------------------------------------------------------------------------------------------;
 
-;FSM Logic
+Do_Second_FSM:
 	mov a, SEC_FSM_state
 SEC_FSM_state0:
 	cjne a, #0, SEC_FSM_state1
@@ -436,18 +449,21 @@ IncCurrentTimeSec:
 	inc current_time_sec
 	cpl LEDRA.0 ; 1 Hz heartbeat LED
 SEC_FSM_done:
-	jnb one_millisecond_flag, not_handle_pwm
-	lcall pwm_wave_generator ; call pwm generator only when 1 ms flag is triggered
-	setb LEDRA.5
-not_handle_pwm:
-	ljmp loop
+	ret
 
-;-------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------;
 ; PWM
-;-------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------;
 ; generate pwm signal for the ssr ; 1.5s period for the pwm signal; with 1 watt 
 ; clarity for the pwm signal; input parameter: power_output; used buffers: x, y
-;-------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------;
+
+Do_PWM_Tick:
+	jnb one_millisecond_flag, Do_PWM_done
+	lcall pwm_wave_generator ; call pwm generator only when 1 ms flag is triggered
+	setb LEDRA.5
+Do_PWM_done:
+	ret
 
 pwm_wave_generator:
 	clr one_millisecond_flag
@@ -504,5 +520,68 @@ set_pwm_high:
 end_pwm_generator:
 	ret
 
-;-------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------;
+; Reflow Profile FSM
+;-----------------------------------------------------------------------------------------------;
+Do_Reflow_FSM:
+	mov a, current_state
+
+;state 0 (waiting for action)
+REFLOW_STATE0:
+    cjne a, #0, REFLOW_STATE1
+
+    ;power off
+    mov power_output+3, #0
+    mov power_output+2, #0
+    mov power_output+1, #0
+    mov power_output+0, #0
+
+    ;waiting for the button cick 
+    jnb Key1_flag, REFLOW_DONE
+    clr Key1_flag         	;clear 
+    mov current_state, #1
+    mov current_time_sec, #0
+    sjmp REFLOW_DONE
+
+;state 1 (pre-soak)
+REFLOW_STATE1:
+    cjne a, #1, REFLOW_STATE2
+
+    ;power = 100%
+    mov power_output+3, #0
+    mov power_output+2, #0
+    mov power_output+1, #05H
+    mov power_output+0, #0DBH   ; ≈ 1499
+
+    ; Transition when temp > 150C
+    ; (comparison logic added later)
+
+    sjmp REFLOW_DONE
+
+;state 1 (soak)
+REFLOW_STATE2:
+    cjne a, #2, REFLOW_STATE3
+    ; (fill later)
+    sjmp REFLOW_DONE
+
+;state 1 (pre-reflow)
+REFLOW_STATE3:
+    cjne a, #3, REFLOW_STATE4
+    ; (fill later)
+    sjmp REFLOW_DONE
+
+;state 1 (reflow)
+REFLOW_STATE4:
+    cjne a, #4, REFLOW_STATE5
+    ; (fill later)
+    sjmp REFLOW_DONE
+
+;state 1 (cooling)
+REFLOW_STATE5:
+    cjne a, #5, REFLOW_DONE
+    ; (fill later)
+
+REFLOW_DONE:
+    ret
+
 END
