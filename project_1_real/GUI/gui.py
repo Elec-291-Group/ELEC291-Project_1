@@ -14,7 +14,7 @@ from tkinter import messagebox
 
 # ===================== SERIAL =====================
 PORT = "COM8"
-BAUD = 115200
+BAUD = 57600
 
 # ===================== PLOT / LOG =====================
 xsize = 200
