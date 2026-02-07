@@ -62,7 +62,10 @@ KEY1_DEB_timer: ds 1
 SEC_FSM_timer:  ds 1
 KEY1_DEB_state:    ds 1
 SEC_FSM_state: 	   ds 1
-Control_FSM_state: ds 1 
+Control_FSM_state: ds 1
+
+proportional_gain_var: ds 4
+
 ; 46d bytes used
 ; ---------------------------------------------------------------------------------------------;
 
@@ -89,6 +92,8 @@ Key1_flag: dbit 1
 PB0_flag: dbit 1 ; start entire program
 PB1_flag: dbit 1 ; start soak
 PB2_flag: dbit 1 ; pause process
+
+soak_temp_greater: dbit 1 ; target soak_temp greater than current_temp
 ; 11 bits used
 ; ---------------------------------------------------------------------------------------------;
 
@@ -114,6 +119,8 @@ PWM_OUT		   EQU P1.3 ; Pin connected to the ssr for outputing pwm signal
 MAX_POWER	   EQU 1500 ; max oven power
 NO_POWER	   EQU 0    ; no power
 BASE_POWER     EQU (MAX_POWER/5) ; 20% base power for state 2, 4
+
+KP			   EQU 5 ; proportional gain
 
 ; These 'equ' must match the wiring between the DE10Lite board and the LCD!
 ; P0 is in connector JPIO.  Check "CV-8052 Soft Processor in the DE10Lite Board: Getting
@@ -485,34 +492,52 @@ SEC_FSM_done:
 ; power_control
 ;-------------------------------------------------------------------------------
 ; Determine the power output based on current state and current temperature 
-; input parameter: current_state
+; input parameter: Control_FSM_state
 ;-------------------------------------------------------------------------------
 
 power_control:
-	mov a, current_state
+	mov a, Control_FSM_state
 
 state0_power_control:
 	; idle
 	; 0% power
 	cjne a, #0, state1_power_control
-	mov power_output, NO_POWER
-	mov power_output+1, NO_POWER
-	mov power_output+2, NO_POWER
-	mov power_output+3, NO_POWER
+	mov power_output, #low(NO_POWER)
+	mov power_output+1, #low(NO_POWER)
+	mov power_output+2, #0
+	mov power_output+3, #0
 	ljmp power_control_done
 
 state1_power_control:
+	; idle
+	; 0% power
+	cjne a, #1, state2_power_control
+	mov power_output, #low(NO_POWER)
+	mov power_output+1, #low(NO_POWER)
+	mov power_output+2, #0
+	mov power_output+3, #0
+	ljmp power_control_done
+	
+state2_power_control:
 	; ramp to soak, ramp to ~150C
 	; 100% power
-	cjne a, #1, state2_power_control
+	cjne a, #2, state3_power_control
 	mov power_output, #low(MAX_POWER)
 	mov power_output+1, #high(MAX_POWER)
+	mov power_output+2, #0
+	mov power_output+3, #0
 	ljmp power_control_done
 
-state2_power_control:
+state3_power_control:
 	; soak period, hold at 150C
-	; 20% base power
-	cjne a, #2, state3_power_control
+	; 20% base power + proportional calculated power
+	cjne a, #3, jump_state4_power_control
+	sjmp state3_power_control_calculation
+
+jump_state4_power_control:
+	ljmp state4_power_control
+
+state3_power_control_calculation:
 	; move soak_temp to x
 	mov x, soak_temp
 	mov x+1, soak_temp+1
@@ -523,19 +548,158 @@ state2_power_control:
 	mov y+1, current_temp+1
 	mov y+2, current_temp+2
 	mov y+3, current_temp+3
-	; soak_temp - current_temp
+
+	; compare between soak_temp and current_temp
+	clr mf
+	lcall x_gteq_y
+	jbc mf, st_sub_ct
+	; current_temp - soak_temp if st < ct
+	clr soak_temp_greater
+	; move current_temp to y
+	mov y, soak_temp
+	mov y+1, soak_temp+1
+	mov y+2, soak_temp+2
+	mov y+3, soak_temp+3
+	; move current_temp to x
+	mov x, current_temp
+	mov x+1, current_temp+1
+	mov x+2, current_temp+2
+	mov x+3, current_temp+3
 	lcall sub32
 	mov soak_temp_diff, x
 	mov soak_temp_diff+1, x+1
 	mov soak_temp_diff+2, x+2
 	mov soak_temp_diff+3, x+3
-	
+	sjmp proportional_input_soak
 
-state3_power_control:
-	cjne a, #3, state4_power_control
+st_sub_ct:
+	; soak_temp - current_temp
+	setb soak_temp_greater
+	lcall sub32
+	mov soak_temp_diff, x
+	mov soak_temp_diff+1, x+1
+	mov soak_temp_diff+2, x+2
+	mov soak_temp_diff+3, x+3
+
+proportional_input_soak:
+	; proportaional block calculation	
+	; move soak_temp_diff to x
+	mov x, soak_temp_diff
+	mov x+1, soak_temp_diff+1
+	mov x+2, soak_temp_diff+2
+	mov x+3, soak_temp_diff+3
+	; move proportional gain to y
+	Load_Y(KP)
+	lcall mul32 ; proportional_output = proportional_gain * difference
+	
+	mov proportional_gain_var, x
+	mov proportional_gain_var+1, x+1
+	mov proportional_gain_var+2, x+2
+	mov proportional_gain_var+3, x+3
+
+	; base_power + soak_power when soak_temp > current_temp
+	jnb soak_temp_greater, sub_proportional_soak
+	mov x, proportional_gain_var
+	mov x+1, proportional_gain_var+1
+	mov x+2, proportional_gain_var+2
+	mov x+3, proportional_gain_var+3
+	Load_Y(BASE_POWER)
+	lcall add32
+	; x now holds the power output before the saturator
+	mov proportional_gain_var, x
+	mov proportional_gain_var+1, x+1
+	mov proportional_gain_var+2, x+2
+	mov proportional_gain_var+3, x+3
+	sjmp saturator_soak
+
+sub_proportional_soak:
+	; base_power - soak_power when soak_temp <= current_temp
+	Load_X(BASE_POWER)
+	mov y, proportional_gain_var
+	mov y+1, proportional_gain_var+1
+	mov y+2, proportional_gain_var+2
+	mov y+3, proportional_gain_var+3
+
+	; compare whether base_power < proportional_gain_var
+	clr mf
+	lcall x_lt_y ; set mf to 1 if base_power < proportional_gain_var, clamp output to 0
+	jnb mf, bp_gteq_pgv
+	mov proportional_gain_var, #low(NO_POWER)
+	mov proportional_gain_var+1, #high(NO_POWER)
+	mov proportional_gain_var+2, #0
+	mov proportional_gain_var+3, #0
+	sjmp saturator_soak
+
+bp_gteq_pgv:
+	; calculate subtracted gain
+	lcall sub32
+	; x now holds the power output before the saturator
+	mov proportional_gain_var, x
+	mov proportional_gain_var+1, x+1
+	mov proportional_gain_var+2, x+2
+	mov proportional_gain_var+3, x+3
+
+saturator_soak:
+	; proportional_gain_var now holds the power output before the saturator
+	; saturate power output to max power
+	mov x, proportional_gain_var
+	mov x+1, proportional_gain_var+1
+	mov x+2, proportional_gain_var+2
+	mov x+3, proportional_gain_var+3
+
+	Load_Y(MAX_POWER)
+
+	clr mf
+	lcall x_gt_y ; set mf to 1 if calculated power output greater than max power
+	jb mf, saturated_soak
+	; set power_output to calculated power if not saturated
+	mov power_output, proportional_gain_var
+	mov power_output+1, proportional_gain_var+1
+	mov power_output+2, proportional_gain_var+2
+	mov power_output+3, proportional_gain_var+3
+	ljmp power_control_done
+
+saturated_soak:
+	mov power_output, #low(MAX_POWER)
+	mov power_output+1, #high(MAX_POWER)
+	mov power_output+2, #0
+	mov power_output+3, #0
+	ljmp power_control_done
+
 
 state4_power_control:
-	cjne a, #5, state5_power_control
+	; ramp to reflow, max power
+	cjne a, #4, state5_power_control
+	mov power_output, #low(MAX_POWER)
+	mov power_output+1, #high(MAX_POWER)
+	mov power_output+2, #0
+	mov power_output+3, #0
+	ljmp power_control_done
+
+state5_power_control:
+	; reflow 20% base power
+	cjne a, #5, state6_power_control
+	mov power_output, #low(BASE_POWER)
+	mov power_output+1, #high(BASE_POWER)
+	mov power_output+2, #0
+	mov power_output+3, #0
+	ljmp power_control_done
+
+state6_power_control:
+	; cooling 0% power
+	cjne a, #6, state_7_power_control
+	mov power_output, #low(NO_POWER)
+	mov power_output+1, #high(NO_POWER)
+	mov power_output+2, #0
+	mov power_output+3, #0
+	ljmp power_control_done
+
+state_7_power_control:
+	; idle 0% power
+	mov power_output, #low(NO_POWER)
+	mov power_output+1, #high(NO_POWER)
+	mov power_output+2, #0
+	mov power_output+3, #0
 
 power_control_done:
 	ret
@@ -551,7 +715,6 @@ PWM_Wave: ; call pwm generator when 1 ms flag is triggered
 	sjmp end_pwm_generator
 
 pwm_wave_generator:
-	clr one_millisecond_flag
 	clr mf
 	; move pwm counter value into x for comparison purpose
 	mov x, pwm_counter
