@@ -1,0 +1,307 @@
+$MODMAX10
+
+    CSEG at 0
+    ljmp mycode
+
+; ---------------- math32 workspace ----------------
+dseg at 30h
+x:      ds 4        ; SUM -> avg_counts -> mV -> tempC*100
+y:      ds 4        ; ADC sample / divisor / scratch
+bcd:    ds 5
+
+bseg
+mf:     dbit 1      ; REQUIRED by math32.asm
+
+; ---------------- averaging state -----------------
+dseg at 40h
+sample_count: ds 1  ; 0..7
+
+FREQ   EQU 33333333
+BAUD   EQU 115200
+T2LOAD EQU 65536-(FREQ/(32*BAUD))
+
+; Channels
+ADC_CH_REF     EQU 4          ; A4 = LM4040-4.096V output
+ADC_CH_LM335   EQU 5          ; A5 = LM335 output
+
+AVG_N          EQU 8
+ADC_FS_mVREF   EQU 4096       ; LM4040-4.096V in mV (used for ratio)
+
+CSEG
+
+InitSerialPort:
+    clr TR2
+    mov T2CON, #30H
+    mov RCAP2H, #high(T2LOAD)
+    mov RCAP2L, #low(T2LOAD)
+    setb TR2
+    mov SCON, #52H
+    setb TI
+    ret
+
+putchar:
+    jnb TI, putchar
+    clr TI
+    mov SBUF, a
+    ret
+
+$include(math32.asm)
+
+cseg
+; LCD wiring (matches your working template)
+ELCD_RS equ P1.7
+ELCD_E  equ P1.1
+ELCD_D4 equ P0.7
+ELCD_D5 equ P0.5
+ELCD_D6 equ P0.3
+ELCD_D7 equ P0.1
+
+$NOLIST
+$include(LCD_4bit_DE10Lite_no_RW.inc)
+$LIST
+
+Wait50ms:
+    mov R0, #30
+W3: mov R1, #74
+W2: mov R2, #250
+W1: djnz R2, W1
+    djnz R1, W2
+    djnz R0, W3
+    ret
+
+LCD_put_A:
+    lcall ?WriteData
+    ret
+
+LCD_put_BCD2:
+    push acc
+    mov a, acc
+    swap a
+    anl a, #0FH
+    orl a, #'0'
+    lcall LCD_put_A
+    pop acc
+    anl a, #0FH
+    orl a, #'0'
+    lcall LCD_put_A
+    ret
+
+LCD_show_temp_TTtt:
+    lcall hex2bcd
+    mov a, bcd+1
+    lcall LCD_put_BCD2
+    mov a, #'.'
+    lcall LCD_put_A
+    mov a, bcd+0
+    lcall LCD_put_BCD2
+    ret
+
+Send_Temp_Serial:
+    lcall hex2bcd
+    mov a, bcd+1
+    swap a
+    anl a, #0FH
+    orl a, #'0'
+    lcall putchar
+    mov a, bcd+1
+    anl a, #0FH
+    orl a, #'0'
+    lcall putchar
+    mov a, #'.'
+    lcall putchar
+    mov a, bcd+0
+    swap a
+    anl a, #0FH
+    orl a, #'0'
+    lcall putchar
+    mov a, bcd+0
+    anl a, #0FH
+    orl a, #'0'
+    lcall putchar
+    mov a, #'\r'
+    lcall putchar
+    mov a, #'\n'
+    lcall putchar
+    ret
+
+Initial_Message:  db 'LM335 Ambient', 0
+
+; -------- ADC helpers --------
+
+; Read ADC5 (LM335) into y (32-bit)
+ReadADC5_to_y:
+    mov ADC_C, #ADC_CH_LM335
+    nop
+    nop
+    nop
+    mov a, ADC_L
+    mov a, ADC_H
+    nop
+    nop
+    nop
+
+    mov y+3, #0
+    mov y+2, #0
+    mov y+1, ADC_H
+    mov y+0, ADC_L
+    mov a, y+1
+    anl a, #0FH
+    mov y+1, a
+    ret
+
+; Read ADC4 (LM4040) into x (32-bit)  <-- avoids overwriting y
+ReadADC4_to_x:
+    mov ADC_C, #ADC_CH_REF
+    nop
+    nop
+    nop
+    mov a, ADC_L
+    mov a, ADC_H
+    nop
+    nop
+    nop
+
+    mov x+3, #0
+    mov x+2, #0
+    mov x+1, ADC_H
+    mov x+0, ADC_L
+    mov a, x+1
+    anl a, #0FH
+    mov x+1, a
+    ret
+
+; Read ADC4 (LM4040) into y (32-bit)  <-- for divisor to div32
+ReadADC4_to_y:
+    mov ADC_C, #ADC_CH_REF
+    nop
+    nop
+    nop
+    mov a, ADC_L
+    mov a, ADC_H
+    nop
+    nop
+    nop
+
+    mov y+3, #0
+    mov y+2, #0
+    mov y+1, ADC_H
+    mov y+0, ADC_L
+    mov a, y+1
+    anl a, #0FH
+    mov y+1, a
+    ret
+
+; ---------------- Main ----------------
+mycode:
+    mov SP, #7FH
+    lcall InitSerialPort
+
+    ; LCD pins as outputs (same as your working file)
+    mov P0MOD, #10101010b
+    mov P1MOD, #10000010b
+
+    lcall ELCD_4BIT
+    Set_Cursor(1, 1)
+    Send_Constant_String(#Initial_Message)
+
+    ; reset ADC
+    mov ADC_C, #0x80
+    lcall Wait50ms
+
+    ; sum x = 0
+    mov x+0,#0
+    mov x+1,#0
+    mov x+2,#0
+    mov x+3,#0
+    mov sample_count,#0
+
+Forever:
+    ; y = ADC5 (LM335)
+    lcall ReadADC5_to_y
+
+    ; x = x + y (sum)
+    lcall add32
+
+    ; sample_count++
+    mov a, sample_count
+    inc a
+    mov sample_count, a
+
+    ; collect AVG_N samples
+    cjne a, #AVG_N, NoUpdate
+    ljmp DoUpdate
+
+NoUpdate:
+    lcall Wait50ms
+    ljmp Forever
+
+DoUpdate:
+    ; avg_counts = sum/AVG_N  (x = avg_counts)
+    Load_y(AVG_N)
+    lcall div32
+
+    ; Save avg_counts into y so we can use x for ref_counts
+    mov y+0, x+0
+    mov y+1, x+1
+    mov y+2, x+2
+    mov y+3, x+3              ; y = avg_counts
+
+    ; Read ref_counts (ADC4) into x
+    lcall ReadADC4_to_x        ; x = ref_counts
+
+    ; Guard against ref_counts == 0
+    mov a, x+0
+    orl a, x+1
+    orl a, x+2
+    orl a, x+3
+    jz  RefBad
+
+    ; Put avg_counts back into x
+    mov x+0, y+0
+    mov x+1, y+1
+    mov x+2, y+2
+    mov x+3, y+3              ; x = avg_counts
+
+    ; x = avg_counts * 4096
+    Load_y(ADC_FS_mVREF)
+    lcall mul32
+
+    ; divisor must be in y, so read ADC4 again into y (simple & reliable)
+    lcall ReadADC4_to_y        ; y = ref_counts
+    lcall div32                ; x = mV
+
+    sjmp RefOk
+
+RefBad:
+    mov x+0,#0
+    mov x+1,#0
+    mov x+2,#0
+    mov x+3,#0
+
+RefOk:
+    ; tempC*100 = (mV*10) - 27315
+    Load_y(10)
+    lcall mul32
+    Load_y(27315)
+    lcall sub32
+
+    ; display + serial
+    Set_Cursor(2,1)
+    mov a,#'T'
+    lcall LCD_put_A
+    mov a,#'='
+    lcall LCD_put_A
+    lcall LCD_show_temp_TTtt
+    lcall Send_Temp_Serial
+
+    ; reset sum and counter
+    mov x+0,#0
+    mov x+1,#0
+    mov x+2,#0
+    mov x+3,#0
+    mov sample_count,#0
+
+    lcall Wait50ms
+    ljmp Forever
+
+end
