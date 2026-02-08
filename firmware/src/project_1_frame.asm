@@ -355,6 +355,9 @@ LCD_Display_Update_7:
 LCD_Display_Update_done:
 	pop acc
 	ret
+
+LCD_Display_Update_Temp:
+	
 ;---------------------------------------------------------
 
 KEY1_DEB:
