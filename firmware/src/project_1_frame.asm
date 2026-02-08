@@ -65,6 +65,8 @@ mf:		dbit 1 ; math32 sign
 one_second_flag: dbit 1
 one_ms_pwm_flag: dbit 1 ; one_millisecond_flag for pwm signal
 
+one_millisecond_flag_servo: dbit 1 ; one_millisecond_flag for servo motor control
+
 soak_temp_reached: dbit 1
 reflow_temp_reached: dbit 1
 cooling_temp_reached: dbit 1
@@ -109,9 +111,15 @@ TIMER2_RELOAD  EQU ((65536-(CLK/(12*TIMER2_RATE))))
 
 PWM_PERIOD     EQU 1499 ; 1.5s period
 
+SERVO_OUT      EQU P1.4 ; x.x modify here to change pwm pin
+
 SOUND_OUT      EQU P1.5 ; Pin connected to the speaker
 
 PWM_OUT		   EQU P1.3 ; Pin connected to the ssr for outputing pwm signal
+
+SERVO_PERIOD   EQU 20 ; pwm signal period for the servo motor (20 ms)
+SERVO_0        EQU 1 ; pwm high time for the servo motor to stay at 0 degree
+SERVO_180      EQU 2 ; pwm high time for the servo motor to stay at 180 degrees
 
 ; These 'equ' must match the wiring between the DE10Lite board and the LCD!
 ; P0 is in connector JPIO.
@@ -305,8 +313,10 @@ Hex_to_bcd_8bit:
 ;-------------------------------------------------------------------------------
 LCD_Display_Update_func:
 	push acc
-	jnb state_change_signal, LCD_Display_Update_Done
-	clr state_change_signal
+	jbc state_change_signal, LCD_Display_Update_Do
+	ljmp LCD_Display_Update_done
+
+LCD_Display_Update_Do:
 	mov a, Control_FSM_state
 
 LCD_Display_Update_0:
