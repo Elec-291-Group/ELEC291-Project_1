@@ -1,0 +1,1574 @@
+0000              1   ; Project 1
+0000              2   ; CV-8052 microcontroller in DE10-Lite board
+0000              3   ;-------------------------------------------------------------------------------
+0000              4   ; Reset vector
+0000              5   org 0x0000
+0000 020A43       6       ljmp main
+0003              7   ; External interrupt 0 vector
+0003              8   org 0x0003
+0003 32           9            reti
+0004             10   ; Timer/Counter 0 overflow interrupt vector
+000B             11   org 0x000B
+000B 020414      12            ljmp Timer0_ISR
+000E             13   ; External interrupt 1 vector
+0013             14   org 0x0013
+0013 32          15            reti
+0014             16   ; Timer/Counter 1 overflow interrupt vector
+001B             17   org 0x001B
+001B 32          18            reti
+001C             19   ; Serial port receive/transmit interrupt vector
+0023             20   org 0x0023 
+0023 32          21            reti
+0024             22   ; Timer/Counter 2 overflow interrupt vector
+002B             23   org 0x002B
+002B 02047F      24            ljmp Timer2_ISR
+002E             25   ;-------------------------------------------------------------------------------
+002E             26   ; includes
+                614   $LIST
+                 29   $LIST
+0320             31   ; ----------------------------------------------------------------------------------------------;
+0320             32   ; Data Segment 0x30 -- 0x7F  (overall 79d bytes available)
+0030             33   dseg at 0x30
+0030             34   ; time buffer 
+0030             35   current_time_sec:     ds 1
+0031             36   current_time_minute:  ds 1
+0032             37   soak_time_sec:        ds 1
+0033             38   soak_time_minute:     ds 1
+0034             39   reflow_time_sec:      ds 1
+0035             40   reflow_time_minute:   ds 1
+0036             41   soak_end_time_sec:      ds 1
+0037             42   soak_end_time_minute:   ds 1
+0038             43   reflow_end_time_sec:    ds 1
+0039             44   reflow_end_time_minute: ds 1
+003A             45   
+003A             46   ; math32 buffer variables
+003A             47   x:               ds      4
+003E             48   y:               ds      4
+0042             49   bcd:     ds      5
+0047             50   
+0047             51   current_temp: ds 4 ;
+004B             52   soak_temp:    ds 4 ;
+004F             53   reflow_temp:  ds 4 ;
+0053             54   
+0053             55   power_output:  ds 4 ;
+0057             56   pwm_counter: ds 4 ; counter for pwm (0-1500)
+005B             57   
+005B             58   KEY1_DEB_timer: ds 1
+005C             59   SEC_FSM_timer:  ds 1
+005D             60   KEY1_DEB_state:    ds 1
+005E             61   SEC_FSM_state:      ds 1
+005F             62   Control_FSM_state: ds 1 
+0060             63   
+0060             64   ; Buzzer module variables
+0060             65   buzz_state:      ds 1   ; 0=IDLE, 1=ON, 2=OFF
+0061             66   buzz_timer:      ds 1   ; counts ms within ON/OFF window
+0062             67   buzz_beeps_left: ds 1   ; how many beeps remaining
+0063             68   buzz_priority:   ds 1   ; 0 none, 1=state, 2=done, 3=error
+0064             69   ; 46d bytes used
+0064             70   ;-------------------------------------------------------------------------------
+0064             71   ; bit operation setb, clr, jb, and jnb
+0000             72   bseg
+0000             73   mf:              dbit 1 ; math32 sign
+0001             74   one_second_lcd_flag: dbit 1
+0002             75   one_ms_pwm_flag: dbit 1 ; one_millisecond_flag for pwm signal
+0003             76   one_ms_buzz_flag: dbit 1 ; one_millisecond_flag for buzz
+0004             77   
+0004             78   soak_temp_reached: dbit 1
+0005             79   reflow_temp_reached: dbit 1
+0006             80   cooling_temp_reached: dbit 1
+0007             81   
+0007             82   soak_time_reached: dbit 1
+0008             83   reflow_time_reached: dbit 1
+0009             84   
+0009             85   reset_signal: dbit 1
+000A             86   stop_signal: dbit 1
+000B             87   start_signal_count: dbit 1
+000C             88   time_count_doing_signal: dbit 1
+000D             89   config_finish_signal: dbit 1
+000E             90   
+000E             91   state_change_signal: dbit 1
+000F             92   state_change_signal_TC: dbit 1
+0010             93   state_change_signal_Count: dbit 1
+0011             94   
+0011             95   Key1_flag: dbit 1
+0012             96   
+0012             97   tc_missing_abort: dbit 1   ; 1 = abort because temp < 50C after 60s
+0013             98   tc_startup_window: dbit 1   ; 1 = still within first 60 seconds of the run
+0014             99   
+0014            100   PB0_flag: dbit 1 ; start entire program
+0015            101   PB1_flag: dbit 1 ; start soak
+0016            102   PB2_flag: dbit 1 ; pause process
+0017            103   ; 11 bits used
+0017            104   
+0017            105   ;-------------------------------------------------------------------------------
+0320            106   cseg
+0320            107   CLK            EQU 33333333 ; Microcontroller system crystal frequency in Hz
+0320            108   BAUD                EQU 57600
+0320            109   
+0320            110   TIMER0_RATE    EQU 4096     ; 2048Hz squarewave (peak amplitude of CEM-1203 speaker)
+0320            111   TIMER0_RELOAD  EQU ((65536-(CLK/(12*TIMER0_RATE)))) ; The prescaler in the CV-8052 
+0320            112   ; is always 12 unlike the N76E003 where is selectable.
+0320            113   
+0320            114   TIMER_1_RELOAD EQU (256-((2*CLK)/(12*32*BAUD)))
+0320            115   
+0320            116   TIMER2_RATE    EQU 1000     ; 1000Hz, for a timer tick of 1ms
+0320            117   TIMER2_RELOAD  EQU ((65536-(CLK/(12*TIMER2_RATE))))
+0320            118   
+0320            119   PWM_PERIOD     EQU 1499 ; 1.5s period
+0320            120   
+0320            121   SOUND_OUT      EQU P1.5 ; Pin connected to the speaker
+0320            122   BEEP_ON_MS          EQU 100  ; 100ms
+0320            123   BEEP_OFF_MS    EQU 100  ; 100ms
+0320            124   
+0320            125   PWM_OUT             EQU P1.3 ; Pin connected to the ssr for outputing pwm signal
+0320            126   
+0320            127   ; These 'equ' must match the wiring between the DE10Lite board and the LCD!
+0320            128   ; P0 is in connector JPIO.
+0320            129   ELCD_RS equ P3.7
+0320            130   ELCD_RW equ P3.5
+0320            131   ELCD_E  equ P3.3
+0320            132   ELCD_D4 equ P3.1
+0320            133   ELCD_D5 equ P2.7
+0320            134   ELCD_D6 equ P2.5
+0320            135   ELCD_D7 equ P2.3
+0320            136   
+0320            137   ;                     1234567890123456 <-- 16 characters per line LCD
+0320 696E6974   138   Initial_Message:  db 'initial message', 0
+     69616C20
+     6D657373
+     61676500
+0330 57656C63   139   String_state0_1:  db 'Welcome        ', 0
+     6F6D6520
+     20202020
+     20202000
+0340 50726573   140   String_state0_2:  db 'Press PB0      ', 0
+     73205042
+     30202020
+     20202000
+0350            141   
+0350            142   ;                       1234567890123456
+0350 53657420   143   String_state1:      db 'Set Parameters ', 0
+     50617261
+     6D657465
+     72732000
+0360 536F616B   144   String_soak_temp:   db 'Soak Temp:', 0
+     2054656D
+     703A00
+036B 5265666C   145   String_reflow_temp: db 'Reflow Temp:', 0
+     6F772054
+     656D703A
+     00
+0378 536F616B   146   String_soak_time:   db 'Soak Time:', 0
+     2054696D
+     653A00
+0383 5265666C   147   String_reflow_time: db 'Reflow Time:', 0
+     6F772054
+     696D653A
+     00
+0390            148   
+0390            149   ;                     1234567890123456
+0390 52616D70   150   String_state2:    db 'Ramp to Soak   ', 0
+     20746F20
+     536F616B
+     20202000
+03A0 536F616B   151   String_state3:    db 'Soak Phase     ', 0
+     20506861
+     73652020
+     20202000
+03B0 52616D70   152   String_state4:    db 'Ramp to Reflow ', 0
+     20746F20
+     5265666C
+     6F772000
+03C0 5265666C   153   String_state5:    db 'Reflow Phase   ', 0
+     6F772050
+     68617365
+     20202000
+03D0 436F6F6C   154   String_state6:    db 'Cooling        ', 0
+     696E6720
+     20202020
+     20202000
+03E0 50726F63   155   String_state7:    db 'Process Done   ', 0
+     65737320
+     446F6E65
+     20202000
+03F0            156   
+03F0 20202020   157   String_Blank:    db '                ', 0
+     20202020
+     20202020
+     20202020
+     00
+0401            158   
+0401            159   ;-------------------------------------------------------------------------------
+0401            160   ; Timers Setting:
+0401            161   ;   Timer 0: 2kHz square wave generation at P1.5 (speaker)
+0401            162   ;        Timer 1: Serial port baud rate 57600 generator
+0401            163   ;        Timer 2: 1ms interrupt for BCD counter increment/decrement
+0401            164   ;-------------------------------------------------------------------------------
+0401            165   ; Routine to initialize the ISR for Timer 0 ;
+0401            166   Timer0_Init:
+0401 E589       167            mov a, TMOD
+0403 54F0       168            anl a, #0xf0 ; Clear the bits for timer 0
+0405 4401       169            orl a, #0x01 ; Configure timer 0 as 16-timer
+0407 F589       170            mov TMOD, a
+0409 758CFD     171            mov TH0, #high(TIMER0_RELOAD)
+040C 758A5A     172            mov TL0, #low(TIMER0_RELOAD)
+040F            173            ; Enable the timer and interrupts
+040F D2A9       174       setb ET0  ; Enable timer 0 interrupt
+0411 D28C       175       setb TR0  ; Start timer 0
+0413 22         176            ret
+0414            177   ; ISR for timer 0.  Set to execute every 1/4096Hz 
+0414            178   ; to generate a 2048 Hz square wave at pin P1.5 
+0414            179   Timer0_ISR:
+0414            180            ;clr TF0  ; According to the data sheet this is done for us already.
+0414 758CFD     181            mov TH0, #high(TIMER0_RELOAD) ; Timer 0 doesn't have autoreload in the CV-8052
+0417 758A5A     182            mov TL0, #low(TIMER0_RELOAD)
+041A B295       183            cpl SOUND_OUT ; Connect speaker to P1.5
+041C 32         184            reti
+041D            185   ; -----------------------------------------------------------------------------------------------;
+041D            186   
+041D            187   ; Routine to initialize the serial port at 57600 baud (Timer 1 in mode 2)
+041D            188   Initialize_Serial_Port:
+041D            189            ; Configure serial port and baud rate
+041D C28E       190            clr TR1 ; Disable timer 1
+041F 53890F     191            anl TMOD, #0x0f ; Mask the bits for timer 1
+0422 438920     192            orl TMOD, #0x20 ; Set timer 1 in 8-bit auto reload mode
+0425 438780     193       orl PCON, #80H ; Set SMOD to 1
+0428 758DFD     194            mov TH1, #low(TIMER_1_RELOAD)
+042B 758BFD     195            mov TL1, #low(TIMER_1_RELOAD) 
+042E D28E       196            setb TR1 ; Enable timer 1
+0430 759852     197            mov SCON, #52H
+0433 22         198            ret
+0434            199   
+0434            200   ; uart sending functions
+0434            201   putchar:
+0434 109902     202            jbc     TI, putchar_L1
+0437 80FB       203            sjmp putchar
+0439            204   putchar_L1:
+0439 F599       205            mov     SBUF,a
+043B 22         206            ret
+043C            207   
+043C            208   SendString:
+043C E4         209       clr a
+043D 93         210       movc a, @a+dptr
+043E 6006       211       jz SendString_L1
+0440 120434     212       lcall putchar
+0443 A3         213       inc dptr
+0444 80F6       214       sjmp SendString  
+0446            215   SendString_L1:
+0446 22         216            ret
+0447            217   
+0447            218   ;-------------------------------------------------------------------------------
+0447            219   ; serial debugging
+0447            220   ; send a four byte number via serial to laptop
+0447            221   ; need to be used with python script
+0447            222   ; content needed to be sent should be stored in the varaible x
+0447            223   ;-------------------------------------------------------------------------------
+0447            224   Send32:
+0447            225       ; data format: 0xAA, 0x55, x+3, x+2, x+1, x+0, 0xAH (big endian)
+0447 74AA       226       mov A, #0AAH
+0449 120434     227       lcall putchar
+044C 7455       228       mov A, #055H
+044E 120434     229       lcall putchar
+0451            230   
+0451 E53D       231       mov A, x+3
+0453 120434     232       lcall putchar
+0456 E53C       233       mov A, x+2
+0458 120434     234       lcall putchar
+045B E53B       235       mov A, x+1
+045D 120434     236       lcall putchar
+0460 E53A       237       mov A, x+0
+0462 120434     238       lcall putchar
+0465            239   
+0465 740A       240       mov A, #0AH
+0467 120434     241       lcall putchar
+046A 22         242       ret
+046B            243   ; -----------------------------------------------------------------------------------------------;
+046B            244   
+046B            245   ;-----------------------------------------------------------------------------------------------;
+                 -1   $include(..\inc\Timer2_ISR.inc) ; Timer 2 ISR for 1ms tick and pwm signal generation
+046B              1   ;------------------------------------------------------------------------------------------------;
+046B              2   ; Routine to initialize the ISR for timer 2 
+046B              3   Timer2_Init:
+046B 75C800       4            mov T2CON, #0 ; Stop timer/counter.  Autoreload mode.
+046E 75CDF5       5            mov TH2, #high(TIMER2_RELOAD)
+0471 75CC27       6            mov TL2, #low(TIMER2_RELOAD)
+0474              7            ; Set the reload value
+0474 75CBF5       8            mov RCAP2H, #high(TIMER2_RELOAD)
+0477 75CA27       9            mov RCAP2L, #low(TIMER2_RELOAD)
+047A             10            ; Enable the timer and interrupts
+047A D2AD        11       setb ET2  ; Enable timer 2 interrupt
+047C D2CA        12       setb TR2  ; Enable timer 2
+047E 22          13            ret
+047F             14   
+047F             15   ; ISR for timer 2.  Runs every 1 ms ;
+047F             16   Timer2_ISR:
+047F C0E0        17            push acc
+0481 C0D0        18            push psw
+0483 C2CF        19            clr TF2  ; Timer 2 doesn't clear TF2 automatically. Do it in ISR
+0485             20            ; cpl P1.1 ; Optional debug pin toggle for scope (ensure it's not used elsewhere)
+0485             21   
+0485             22   ; FSM states timers
+0485 055B        23            inc KEY1_DEB_timer
+0487 055C        24            inc SEC_FSM_timer
+0489             25   
+0489 D202        26            setb one_ms_pwm_flag ; set the one millisecond flag for pwm signal generation
+048B D203        27            setb one_ms_buzz_flag
+048D             28   
+048D             29   Timer2_ISR_done:
+048D D0D0        30            pop psw
+048F D0E0        31            pop acc
+0491 32          32            reti
+0492             33   ;-----------------------------------------------------------------------------------------------;
+                 -1   $include(..\inc\LCD_4bit_DE10Lite_no_RW.inc) ; LCD related functions and utility macros
+0492              1   ;  LCD routines adapted for the DE10-Lite configured as a CV_8052 processor
+0492              2   cseg
+0492              3   
+0492              4   ; When using a 33.333333MHz crystal clock
+0492              5   ; one cycle takes 1.0/33.333333MHz = 30 ns
+0492              6   
+0492              7   ;---------------------------------;
+0492              8   ; Wait 40 microseconds            ;
+0492              9   ;---------------------------------;
+0492             10   Wait40uSec:
+0492 C000        11            push AR0
+0494 78BE        12            mov R0, #190
+0496             13   L0: 
+0496 00          14            nop
+0497 00          15            nop
+0498 00          16            nop
+0499 00          17            nop
+049A D8FA        18            djnz R0, L0 ; 1+1+1+1+3 cycles->7*30ns*190=40us
+049C D000        19            pop AR0
+049E 22          20       ret
+049F             21   
+049F             22   ;---------------------------------;
+049F             23   ; Wait 'R2' milliseconds          ;
+049F             24   ;---------------------------------;
+                 25   Wait_Milli_Seconds mac
+                 26   	push AR2
+                 27   	mov R2, %0
+                 28   	lcall ?Wait_Milli_Seconds
+                 29   	pop AR2
+                 30   endmac
+049F             31   
+049F             32   ?Wait_Milli_Seconds:
+049F C000        33            push AR0
+04A1 C001        34            push AR1
+04A3 7932        35   L3: mov R1, #50
+04A5 78DF        36   L2: mov R0, #223
+04A7 D8FE        37   L1: djnz R0, L1 ; 3 cycles->3*30ns*250=20.07us
+04A9 D9FA        38       djnz R1, L2 ; 20.07us*50=1.004ms
+04AB DAF6        39       djnz R2, L3 ; number of millisecons to wait passed in R2
+04AD D001        40       pop AR1
+04AF D000        41       pop AR0
+04B1 22          42       ret
+04B2             43            
+04B2             44   ;---------------------------------;
+04B2             45   ; Toggles the 'E' pin in the LCD  ;
+04B2             46   ;---------------------------------;
+04B2             47   ELCD_pulse:
+04B2 D2B3        48            setb ELCD_E
+04B4 120492      49            lcall Wait40uSec
+04B7 C2B3        50            clr ELCD_E
+04B9 120492      51       lcall Wait40uSec ; This line is needed in the DE1SoC running an 8051 because it is much faster than the AT89LP51RC2
+04BC 22          52       ret
+04BD             53   
+04BD             54   ;---------------------------------;
+04BD             55   ; Writes acc to LCD in 4-bit mode ;
+04BD             56   ;---------------------------------;
+04BD             57   ELCD_byte:
+04BD             58            ; Write high 4 bits first
+04BD A2E7        59            mov c, ACC.7
+04BF 92A3        60            mov ELCD_D7, c
+04C1 A2E6        61            mov c, ACC.6
+04C3 92A5        62            mov ELCD_D6, c
+04C5 A2E5        63            mov c, ACC.5
+04C7 92A7        64            mov ELCD_D5, c
+04C9 A2E4        65            mov c, ACC.4
+04CB 92B1        66            mov ELCD_D4, c
+04CD 1204B2      67       lcall ELCD_pulse
+04D0             68            ; Write low 4 bits next
+04D0 A2E3        69            mov c, ACC.3
+04D2 92A3        70            mov ELCD_D7, c
+04D4 A2E2        71            mov c, ACC.2
+04D6 92A5        72            mov ELCD_D6, c
+04D8 A2E1        73            mov c, ACC.1
+04DA 92A7        74            mov ELCD_D5, c
+04DC A2E0        75            mov c, ACC.0
+04DE 92B1        76            mov ELCD_D4, c
+04E0 1204B2      77       lcall ELCD_pulse
+04E3 22          78            ret
+04E4             79   
+04E4             80   ;---------------------------------;
+04E4             81   ; Write data to LCD               ;
+04E4             82   ;---------------------------------;
+                 83   WriteData mac
+                 84   	mov a, %0
+                 85   	lcall ?WriteData
+                 86   endmac
+04E4             87            
+04E4             88   ?WriteData:
+04E4 D2B7        89            setb ELCD_RS
+04E6 0204BD      90            ljmp ELCD_byte
+04E9             91   
+04E9             92   ;---------------------------------;
+04E9             93   ; Write command to LCD            ;
+04E9             94   ;---------------------------------;
+                 95   WriteCommand mac
+                 96   	mov a, %0
+                 97   	lcall ?WriteCommand
+                 98   endmac
+04E9             99   
+04E9            100   ?WriteCommand:
+04E9 C2B7       101            clr ELCD_RS
+04EB 0204BD     102            ljmp ELCD_byte
+04EE            103   
+04EE            104   ;---------------------------------;
+04EE            105   ; Configure LCD in 4-bit mode     ;
+04EE            106   ;---------------------------------;
+04EE            107   ELCD_4BIT:
+04EE C2B3       108            clr ELCD_E   ; Resting state of LCD's enable pin is zero
+04F0            109            ;clr ELCD_RW  ; RW forced to zero
+04F0            110            
+04F0            111            ; After power on, let the LCD start up before initializing
+04F0 C002       112            push AR2
+04F2 7A28       112            mov R2, #40
+04F4 12049F     112            lcall ?Wait_Milli_Seconds
+04F7 D002       112            pop AR2
+04F9            112   
+04F9            113            
+04F9            114            ; First make sure the LCD is in 8-bit mode and then change to 4-bit mode
+04F9 7433       115            mov a, #0x33
+04FB 1204E9     115            lcall ?WriteCommand
+04FE 7433       116            mov a, #0x33
+0500 1204E9     116            lcall ?WriteCommand
+0503 7432       117            mov a, #0x32
+0505 1204E9     117            lcall ?WriteCommand ; change to 4-bit mode
+0508            118   
+0508            119            ; Configure the LCD
+0508 7428       120            mov a, #0x28
+050A 1204E9     120            lcall ?WriteCommand
+050D 740C       121            mov a, #0x0c
+050F 1204E9     121            lcall ?WriteCommand
+0512 7401       122            mov a, #0x01
+0514 1204E9     122            lcall ?WriteCommand ;  Clear screen command (takes some time)
+0517            123   
+0517            124       ;Wait for the clear screen command to finish.
+0517 C002       125            push AR2
+0519 7A02       125            mov R2, #2
+051B 12049F     125            lcall ?Wait_Milli_Seconds
+051E D002       125            pop AR2
+0520            125   
+0520 22         126       ret
+0521            127   
+0521            128   ;---------------------------------;
+0521            129   ; Send a constant string to LCD   ;
+0521            130   ;---------------------------------;
+                131   Send_Constant_String mac
+                132   	push dph
+                133   	push dpl
+                134   	push acc
+                135   	mov dptr, %0
+                136   	lcall ?Send_Constant_String
+                137   	pop acc
+                138   	pop dpl
+                139   	pop dph
+                140   endmac
+0521            141   
+0521            142   ?Send_Constant_String:
+0521 E4         143       clr a
+0522 93         144       movc a, @a+dptr
+0523 6006       145       jz ?Send_Constant_String_Done
+0525 1204E4     146       lcall ?WriteData
+0528 A3         147       inc dptr
+0529 80F6       148       sjmp ?Send_Constant_String
+052B            149   ?Send_Constant_String_Done:
+052B 22         150       ret  
+052C            151   
+052C            152   ;---------------------------------;
+052C            153   ; Set LCD cursor at row, column   ;
+052C            154   ;---------------------------------;
+                155   Set_Cursor mac
+                156   	push acc
+                157   	mov a, #%1
+                158   	dec a
+                159   	lcall ?Set_Cursor_%0 ; Select column and row
+                160   	pop acc
+                161   endmac
+052C            162   
+052C            163   ?Set_Cursor_2:
+052C 4440       164            orl a, #01000000B
+052E            165   ?Set_Cursor_1:
+052E 4480       166            orl a, #10000000B
+0530 0204E9     167            ljmp ?WriteCommand ; Select column and row
+0533            168   
+0533            169   ;---------------------------------;
+0533            170   ; Display a BCD number in the LCD ;
+0533            171   ;---------------------------------;
+                172   Display_BCD mac
+                173   	push ar0
+                174   	mov r0, %0
+                175   	lcall ?Display_BCD
+                176   	pop ar0
+                177   endmac
+0533            178   
+0533            179   ?Display_BCD:
+0533 C0E0       180            push acc
+0535            181            ; Write most significant digit
+0535 E8         182            mov a, r0
+0536 C4         183            swap a
+0537 540F       184            anl a, #0fh
+0539 4430       185            orl a, #30h
+053B 1204E4     186            lcall ?WriteData
+053E            187            ; write least significant digit
+053E E8         188            mov a, r0
+053F 540F       189            anl a, #0fh
+0541 4430       190            orl a, #30h
+0543 1204E4     191            lcall ?WriteData
+0546 D0E0       192            pop acc
+0548 22         193            ret
+0549            194   
+0549            195   ;------------------------------------;
+0549            196   ; Display a char in the LCD          ;
+0549            197   ;------------------------------------;
+                198   Display_char mac
+                199   	push acc
+                200   	mov a, %0
+                201   	lcall ?WriteData
+                202   	pop acc
+                203   endmac
+0549            204   
+0549            248            ;-----------------------------------------------------------------------------------------------;
+0549            249   
+0549            250   ;-------------------------------------------------------------------------------
+0549            251   ; Display Function for 7-segment displays                
+0549            252   ;-------------------------------------------------------------------------------
+0549            253   ; Look-up table for the 7-seg displays. (Segments are turn on with zero) 
+0549            254   T_7seg:
+0549 C0F9A4B0   255       DB 0xC0, 0xF9, 0xA4, 0xB0, 0x99        ; 0 TO 4
+     99
+054E 9282F880   256       DB 0x92, 0x82, 0xF8, 0x80, 0x90        ; 4 TO 9
+     90
+0553 8883C6A1   257       DB 0x88, 0x83, 0xC6, 0xA1, 0x86, 0x8E  ; A to F
+     868E
+0559            258   
+0559            259   ; Displays a BCD number pased in R0 in HEX5-HEX0
+0559            260   Display_BCD_7_Seg_HEX10:
+0559 900549     261            mov dptr, #T_7seg
+055C E8         262            mov a, R0
+055D C4         263            swap a
+055E 540F       264            anl a, #0FH
+0560 93         265            movc a, @a+dptr
+0561 F592       266            mov HEX1, a
+0563 E8         267            mov a, R0
+0564 540F       268            anl a, #0FH
+0566 93         269            movc a, @a+dptr
+0567 F591       270            mov HEX0, a
+0569 22         271            ret
+056A            272   
+056A            273   Display_BCD_7_Seg_HEX32:
+056A 900549     274            mov dptr, #T_7seg
+056D E8         275            mov a, R0
+056E C4         276            swap a
+056F 540F       277            anl a, #0FH
+0571 93         278            movc a, @a+dptr
+0572 F594       279            mov HEX3, a
+0574 E8         280            mov a, R0
+0575 540F       281            anl a, #0FH
+0577 93         282            movc a, @a+dptr
+0578 F593       283            mov HEX2, a
+057A 22         284            ret
+057B            285   
+057B            286   Display_BCD_7_Seg_HEX54:
+057B 900549     287            mov dptr, #T_7seg
+057E E8         288            mov a, R0
+057F C4         289            swap a
+0580 540F       290            anl a, #0FH
+0582 93         291            movc a, @a+dptr
+0583 F58F       292            mov HEX5, a
+0585 E8         293            mov a, R0
+0586 540F       294            anl a, #0FH
+0588 93         295            movc a, @a+dptr
+0589 F58E       296            mov HEX4, a
+058B 22         297            ret
+058C            298   
+058C            299   ; The 8-bit hex number passed in the accumulator is converted to
+058C            300   ; BCD and stored in [R1, R0]
+058C            301   Hex_to_bcd_8bit:
+058C 75F064     302            mov b, #100
+058F 84         303            div ab
+0590 F9         304            mov R1, a   ; After dividing, a has the 100s
+0591 E5F0       305            mov a, b    ; Remainder is in register b
+0593 75F00A     306            mov b, #10
+0596 84         307            div ab ; The tens are stored in a, the units are stored in b 
+0597 C4         308            swap a
+0598 54F0       309            anl a, #0xf0
+059A 45F0       310            orl a, b
+059C F8         311            mov R0, a
+059D 22         312            ret
+059E            313   
+059E            314   ;-------------------------------------------------------------------------------
+059E            315   ; Display Function for LCD                                               
+059E            316   ;-------------------------------------------------------------------------------
+059E            317   LCD_Display_Update_func:
+059E C0E0       318            push acc
+05A0 100E03     319            jbc state_change_signal, LCD_Display_Update_Do
+05A3 0206D4     320            ljmp LCD_Display_Update_Done
+05A6            321   
+05A6            322   LCD_Display_Update_Do:
+05A6 E55F       323            mov a, Control_FSM_state
+05A8            324   
+05A8            325   LCD_Display_Update_0:
+05A8 B4003B     326            cjne a, #0, LCD_Display_Update_1
+05AB C0E0       327            push acc
+05AD 7401       327            mov a, #1
+05AF 14         327            dec a
+05B0 12052E     327            lcall ?Set_Cursor_1 ; Select column and row
+05B3 D0E0       327            pop acc
+05B5 C083       328            push dph
+05B7 C082       328            push dpl
+05B9 C0E0       328            push acc
+05BB 900330     328            mov dptr, #String_state0_1
+05BE 120521     328            lcall ?Send_Constant_String
+05C1 D0E0       328            pop acc
+05C3 D082       328            pop dpl
+05C5 D083       328            pop dph
+05C7 C0E0       329            push acc
+05C9 7401       329            mov a, #1
+05CB 14         329            dec a
+05CC 12052C     329            lcall ?Set_Cursor_2 ; Select column and row
+05CF D0E0       329            pop acc
+05D1 C083       330            push dph
+05D3 C082       330            push dpl
+05D5 C0E0       330            push acc
+05D7 900340     330            mov dptr, #String_state0_2
+05DA 120521     330            lcall ?Send_Constant_String
+05DD D0E0       330            pop acc
+05DF D082       330            pop dpl
+05E1 D083       330            pop dph
+05E3 0206D4     331            ljmp LCD_Display_Update_done
+05E6            332   
+05E6            333   LCD_Display_Update_1:
+05E6 B4011F     334            cjne a, #1, LCD_Display_Update_2
+05E9 C0E0       335            push acc
+05EB 7401       335            mov a, #1
+05ED 14         335            dec a
+05EE 12052E     335            lcall ?Set_Cursor_1 ; Select column and row
+05F1 D0E0       335            pop acc
+05F3 C083       336            push dph
+05F5 C082       336            push dpl
+05F7 C0E0       336            push acc
+05F9 900350     336            mov dptr, #String_state1
+05FC 120521     336            lcall ?Send_Constant_String
+05FF D0E0       336            pop acc
+0601 D082       336            pop dpl
+0603 D083       336            pop dph
+0605 0206D4     337            ljmp LCD_Display_Update_done
+0608            338   
+0608            339   LCD_Display_Update_2:
+0608 B4021F     340            cjne a, #2, LCD_Display_Update_3
+060B C0E0       341            push acc
+060D 7401       341            mov a, #1
+060F 14         341            dec a
+0610 12052E     341            lcall ?Set_Cursor_1 ; Select column and row
+0613 D0E0       341            pop acc
+0615 C083       342            push dph
+0617 C082       342            push dpl
+0619 C0E0       342            push acc
+061B 900390     342            mov dptr, #String_state2
+061E 120521     342            lcall ?Send_Constant_String
+0621 D0E0       342            pop acc
+0623 D082       342            pop dpl
+0625 D083       342            pop dph
+0627 0206D4     343            ljmp LCD_Display_Update_done
+062A            344   
+062A            345   LCD_Display_Update_3:
+062A B4031F     346            cjne a, #3, LCD_Display_Update_4
+062D C0E0       347            push acc
+062F 7401       347            mov a, #1
+0631 14         347            dec a
+0632 12052E     347            lcall ?Set_Cursor_1 ; Select column and row
+0635 D0E0       347            pop acc
+0637 C083       348            push dph
+0639 C082       348            push dpl
+063B C0E0       348            push acc
+063D 9003A0     348            mov dptr, #String_state3
+0640 120521     348            lcall ?Send_Constant_String
+0643 D0E0       348            pop acc
+0645 D082       348            pop dpl
+0647 D083       348            pop dph
+0649 0206D4     349            ljmp LCD_Display_Update_done
+064C            350   
+064C            351   LCD_Display_Update_4:
+064C B4041F     352            cjne a, #4, LCD_Display_Update_5
+064F C0E0       353            push acc
+0651 7401       353            mov a, #1
+0653 14         353            dec a
+0654 12052E     353            lcall ?Set_Cursor_1 ; Select column and row
+0657 D0E0       353            pop acc
+0659 C083       354            push dph
+065B C082       354            push dpl
+065D C0E0       354            push acc
+065F 9003B0     354            mov dptr, #String_state4
+0662 120521     354            lcall ?Send_Constant_String
+0665 D0E0       354            pop acc
+0667 D082       354            pop dpl
+0669 D083       354            pop dph
+066B 0206D4     355            ljmp LCD_Display_Update_done
+066E            356   
+066E            357   LCD_Display_Update_5:
+066E B4051F     358            cjne a, #5, LCD_Display_Update_6
+0671 C0E0       359            push acc
+0673 7401       359            mov a, #1
+0675 14         359            dec a
+0676 12052E     359            lcall ?Set_Cursor_1 ; Select column and row
+0679 D0E0       359            pop acc
+067B C083       360            push dph
+067D C082       360            push dpl
+067F C0E0       360            push acc
+0681 9003C0     360            mov dptr, #String_state5
+0684 120521     360            lcall ?Send_Constant_String
+0687 D0E0       360            pop acc
+0689 D082       360            pop dpl
+068B D083       360            pop dph
+068D 0206D4     361            ljmp LCD_Display_Update_done
+0690            362   
+0690            363   LCD_Display_Update_6:
+0690 B4061F     364            cjne a, #6, LCD_Display_Update_7
+0693 C0E0       365            push acc
+0695 7401       365            mov a, #1
+0697 14         365            dec a
+0698 12052E     365            lcall ?Set_Cursor_1 ; Select column and row
+069B D0E0       365            pop acc
+069D C083       366            push dph
+069F C082       366            push dpl
+06A1 C0E0       366            push acc
+06A3 9003D0     366            mov dptr, #String_state6
+06A6 120521     366            lcall ?Send_Constant_String
+06A9 D0E0       366            pop acc
+06AB D082       366            pop dpl
+06AD D083       366            pop dph
+06AF 0206D4     367            ljmp LCD_Display_Update_done
+06B2            368   
+06B2            369   LCD_Display_Update_7:
+06B2 B4071F     370            cjne a, #7, LCD_Display_Update_done
+06B5 C0E0       371            push acc
+06B7 7401       371            mov a, #1
+06B9 14         371            dec a
+06BA 12052E     371            lcall ?Set_Cursor_1 ; Select column and row
+06BD D0E0       371            pop acc
+06BF C083       372            push dph
+06C1 C082       372            push dpl
+06C3 C0E0       372            push acc
+06C5 9003E0     372            mov dptr, #String_state7
+06C8 120521     372            lcall ?Send_Constant_String
+06CB D0E0       372            pop acc
+06CD D082       372            pop dpl
+06CF D083       372            pop dph
+06D1 0206D4     373            ljmp LCD_Display_Update_done
+06D4            374   
+06D4            375   LCD_Display_Update_done:
+06D4 D0E0       376            pop acc
+06D6 22         377            ret
+06D7            378   
+06D7            379   LCD_Display_Update_Time:
+06D7 300C2B     380            jnb time_count_doing_signal, LCD_Display_Update_Time_done
+06DA 100102     381            jbc one_second_lcd_flag, LCD_Display_Update_Time_do
+06DD 8026       382            sjmp LCD_Display_Update_Time_done
+06DF            383   
+06DF            384   LCD_Display_Update_Time_do:
+06DF C0E0       385            push acc
+06E1 740E       385            mov a, #14
+06E3 14         385            dec a
+06E4 12052C     385            lcall ?Set_Cursor_2 ; Select column and row
+06E7 D0E0       385            pop acc
+06E9 C000       386            push ar0
+06EB A830       386            mov r0, current_time_sec
+06ED 120533     386            lcall ?Display_BCD
+06F0 D000       386            pop ar0
+06F2 C0E0       387            push acc
+06F4 740B       387            mov a, #11
+06F6 14         387            dec a
+06F7 12052C     387            lcall ?Set_Cursor_2 ; Select column and row
+06FA D0E0       387            pop acc
+06FC C000       388            push ar0
+06FE A831       388            mov r0, current_time_minute
+0700 120533     388            lcall ?Display_BCD
+0703 D000       388            pop ar0
+0705            389   
+0705            390   LCD_Display_Update_Time_done:
+0705 22         391            ret
+0706            392   ;---------------------------------------------------------
+0706            393   
+0706            394   KEY1_DEB:
+0706            395   ;non-blocking state machine for KEY1 debounce
+0706 E55D       396            mov a, KEY1_DEB_state
+0708            397   KEY1_DEB_state0:
+0708 B4000A     398            cjne a, #0, KEY1_DEB_state1
+070B 20F92D     399            jb KEY.1, KEY1_DEB_done
+070E 755B00     400            mov KEY1_DEB_timer, #0
+0711 055D       401            inc KEY1_DEB_state
+0713 8026       402            sjmp KEY1_DEB_done
+0715            403   KEY1_DEB_state1:
+0715 B40109     404            cjne a, #1, KEY1_DEB_state2
+0718            405            ; this is the debounce state
+0718 E55B       406            mov a, KEY1_DEB_timer
+071A B4321E     407            cjne a, #50, KEY1_DEB_done ; 50 ms passed?
+071D 055D       408            inc KEY1_DEB_state
+071F 801A       409            sjmp KEY1_DEB_done      
+0721            410   KEY1_DEB_state2:
+0721 B4020C     411            cjne a, #2, KEY1_DEB_state3
+0724 20F904     412            jb KEY.1, KEY1_DEB_state2b
+0727 055D       413            inc KEY1_DEB_state
+0729 8010       414            sjmp KEY1_DEB_done      
+072B            415   KEY1_DEB_state2b:
+072B 755D00     416            mov KEY1_DEB_state, #0
+072E 800B       417            sjmp KEY1_DEB_done
+0730            418   KEY1_DEB_state3:
+0730 B40308     419            cjne a, #3, KEY1_DEB_done
+0733 30F905     420            jnb KEY.1, KEY1_DEB_done
+0736 D211       421            setb Key1_flag ; Suscesfully detected a valid KEY1 press/release
+0738 755D00     422            mov KEY1_DEB_state, #0  
+073B            423   KEY1_DEB_done:
+073B 22         424            ret
+073C            425   
+073C            426   ; ------------------------------------------------------------------------------
+073C            427   ; Non-blocking FSM for the one second counter
+073C            428   ;-------------------------------------------------------------------------------
+073C            429   SEC_FSM:
+073C E55E       430            mov a, SEC_FSM_state
+073E            431   SEC_FSM_state0:
+073E B4000C     432            cjne a, #0, SEC_FSM_state1
+0741 E55C       433            mov a, SEC_FSM_timer
+0743 B4FA4C     434            cjne a, #250, SEC_FSM_done ; 250 ms passed?
+0746 755C00     435            mov SEC_FSM_timer, #0
+0749 055E       436            inc SEC_FSM_state
+074B 8045       437            sjmp SEC_FSM_done
+074D            438   SEC_FSM_state1:  
+074D B4010E     439            cjne a, #1, SEC_FSM_state2
+0750 D2E9       440            setb LEDRA.1
+0752 E55C       441            mov a, SEC_FSM_timer
+0754 B4FA3B     442            cjne a, #250, SEC_FSM_done ; 250 ms passed?
+0757 755C00     443            mov SEC_FSM_timer, #0
+075A 055E       444            inc SEC_FSM_state
+075C 8034       445            sjmp SEC_FSM_done
+075E            446   SEC_FSM_state2:  
+075E B4020E     447            cjne a, #2, SEC_FSM_state3
+0761 D2EA       448            setb LEDRA.2
+0763 E55C       449            mov a, SEC_FSM_timer
+0765 B4FA2A     450            cjne a, #250, SEC_FSM_done ; 250 ms passed?
+0768 755C00     451            mov SEC_FSM_timer, #0
+076B 055E       452            inc SEC_FSM_state
+076D 8023       453            sjmp SEC_FSM_done
+076F            454   SEC_FSM_state3:  
+076F B40320     455            cjne a, #3, SEC_FSM_done
+0772 D2EB       456            setb LEDRA.3
+0774 E55C       457            mov a, SEC_FSM_timer
+0776 B4FA19     458            cjne a, #250, SEC_FSM_done ; 250 ms passed?
+0779 755C00     459            mov SEC_FSM_timer, #0
+077C 755E00     460            mov SEC_FSM_state, #0
+077F            461            ; update current time
+077F D201       462            setb one_second_lcd_flag
+0781 E530       463       mov  a, current_time_sec
+0783 04         464       inc  a
+0784 B43C07     465       cjne a, #60, SEC_NoMinuteCarry
+0787 753000     466       mov  current_time_sec, #0
+078A 0531       467       inc  current_time_minute
+078C 8002       468       sjmp SEC_TimeDone
+078E            469   SEC_NoMinuteCarry:
+078E F530       470       mov  current_time_sec, a
+0790            471   SEC_TimeDone:
+0790 B2E8       472       cpl  LEDRA.0              ; 1 Hz heartbeat LED
+0792            473   SEC_FSM_done:
+0792 22         474            ret
+0793            475   
+0793            476   ; ------------------------------------------------------------------------------
+0793            477   ; Counting the processing time 
+0793            478   ;-------------------------------------------------------------------------------
+0793            479   Time_Counter:
+0793 C0E0       480            push ACC
+0795 C0D0       481            push psw
+0797 E55F       482            mov a, Control_FSM_state
+0799 B40211     483            cjne a, #2, Time_Counter_Nstate2
+079C 101003     484            jbc state_change_signal_Count, Time_Counter_Start
+079F 0207B8     485            ljmp Time_Counter_Done
+07A2            486   
+07A2            487   Time_Counter_Start:
+07A2 753000     488            mov current_time_sec, #0
+07A5 753100     489            mov current_time_minute, #0
+07A8 D20C       490            setb time_count_doing_signal
+07AA 0207B8     491            ljmp Time_Counter_Done
+07AD            492   
+07AD            493   Time_Counter_Nstate2:
+07AD B40602     494            cjne a, #6, Time_Counter_Nstate6
+07B0 C20C       495            clr time_count_doing_signal
+07B2            496   
+07B2            497   Time_Counter_Nstate6:
+07B2 300C03     498            jnb time_count_doing_signal, Time_Counter_Done
+07B5 12073C     499            lcall SEC_FSM
+07B8            500   
+07B8            501   Time_Counter_Done:
+07B8 D0D0       502            pop psw
+07BA D0E0       503            pop ACC
+07BC 22         504            ret
+07BD            505   
+07BD            506   ;-------------------------------------------------------------------------------
+07BD            507   ; PWM
+07BD            508   ; generate pwm signal for the ssr ; 1.5s period for the pwm signal; with 1 watt 
+07BD            509   ; clarity for the pwm signal; input parameter: power_output; used buffers: x, y
+07BD            510   ; ------------------------------------------------------------------------------
+07BD            511   PWM_Wave: ; call pwm generator when 1 ms flag is triggered
+07BD 100202     512            jbc one_ms_pwm_flag, pwm_wave_generator
+07C0 8071       513            sjmp end_pwm_generator
+07C2            514   
+07C2            515   pwm_wave_generator:
+07C2 C200       516            clr mf
+07C4            517            ; move pwm counter value into x for comparison purpose
+07C4 85573A     518            mov x, pwm_counter
+07C7 85583B     519            mov x+1, pwm_counter+1
+07CA 85593C     520            mov x+2, pwm_counter+2
+07CD 855A3D     521            mov x+3, pwm_counter+3
+07D0            522   
+07D0 753EDB     523            mov y+0, #low (PWM_PERIOD % 0x10000) 
+07D3 753F05     523            mov y+1, #high(PWM_PERIOD % 0x10000) 
+07D6 754000     523            mov y+2, #low (PWM_PERIOD / 0x10000) 
+07D9 754100     523            mov y+3, #high(PWM_PERIOD / 0x10000) 
+07DC            524   
+07DC            525            ; compare x(pwm_counter) and y(1499) if x=y, wrap x back to 0; else 
+07DC            526            ; increase x by 1
+07DC 120152     527            lcall x_eq_y 
+07DF 20001D     528            jb mf, wrap_pwm_counter
+07E2            529            ; x not equal 1499, increment by 1
+07E2 753E01     530            mov y+0, #low (1 % 0x10000) 
+07E5 753F00     530            mov y+1, #high(1 % 0x10000) 
+07E8 754000     530            mov y+2, #low (1 / 0x10000) 
+07EB 754100     530            mov y+3, #high(1 / 0x10000) 
+07EE 1200D3     531            lcall add32
+07F1            532            ; update pwm_counter
+07F1 853A57     533            mov pwm_counter, x
+07F4 853B58     534            mov pwm_counter+1, x+1
+07F7 853C59     535            mov pwm_counter+2, x+2
+07FA 853D5A     536            mov pwm_counter+3, x+3
+07FD 8018       537            sjmp set_pwm
+07FF            538   
+07FF            539   wrap_pwm_counter:
+07FF            540            ; x equal 1499, wrap to 0
+07FF 753A00     541            mov x+0, #low (0 % 0x10000) 
+0802 753B00     541            mov x+1, #high(0 % 0x10000) 
+0805 753C00     541            mov x+2, #low (0 / 0x10000) 
+0808 753D00     541            mov x+3, #high(0 / 0x10000) 
+080B 853A57     542            mov pwm_counter, x
+080E 853B58     543            mov pwm_counter+1, x+1
+0811 853C59     544            mov pwm_counter+2, x+2
+0814 853D5A     545            mov pwm_counter+3, x+3
+0817            546   
+0817            547   set_pwm:
+0817            548            ; compare with power_output, if pwm counter smaller than power_output, 
+0817            549            ; set pwm pin high; else set pwm pin low load y with power output value
+0817 85533E     550            mov y, power_output
+081A 85543F     551            mov y+1, power_output+1
+081D 855540     552            mov y+2, power_output+2
+0820 855641     553            mov y+3, power_output+3
+0823            554   
+0823            555            ; compare x(pwm counter) with y(power output)
+0823 12011A     556            lcall x_lt_y
+0826 200006     557            jb mf, set_pwm_high ; set pwm pin high if pwm counter smaller than power 
+0829            558            ;output set pwm pin low if pwm counter greater than power output
+0829 C293       559            clr PWM_OUT
+082B C2EC       560            clr LEDRA.4
+082D 8004       561            sjmp end_pwm_generator
+082F            562   
+082F            563   set_pwm_high:
+082F D293       564            setb PWM_OUT
+0831 D2EC       565            setb LEDRA.4
+0833            566   
+0833            567   end_pwm_generator:
+0833 22         568            ret
+0834            569   
+0834            570   ;-------------------------------------------------------------------------------
+0834            571   
+0834            572   ;-------------------------------------------------------------------------------
+0834            573   ; BUZZER MODULE (non-blocking)
+0834            574   ; Public API:
+0834            575   ;   lcall Beep_StateChange   ; 1 beep  (priority 1)
+0834            576   ;   lcall Beep_Done          ; 5 beeps (priority 2)
+0834            577   ;   lcall Beep_Error         ; 10 beeps(priority 3)
+0834            578   ; Background task:
+0834            579   ;   lcall Buzzer_Task        ; call every loop
+0834            580   ;-------------------------------------------------------------------------------
+0834            581   Beep_StateChange:
+0834 75F001     582       mov  B,  #1
+0837 7F01       583       mov  R7, #1
+0839 12084F     584       lcall Beep_Request
+083C 22         585       ret
+083D            586   
+083D            587   Beep_Done:
+083D 75F005     588       mov  B,  #5
+0840 7F02       589       mov  R7, #2
+0842 12084F     590       lcall Beep_Request
+0845 22         591       ret
+0846            592   
+0846            593   Beep_Error:
+0846 75F00A     594       mov  B,  #10
+0849 7F03       595       mov  R7, #3
+084B 12084F     596       lcall Beep_Request
+084E 22         597       ret
+084F            598   
+084F            599   ;---------------------------------------------------------
+084F            600   ; Beep_Request
+084F            601   ; Inputs:
+084F            602   ;   B  = number of beeps
+084F            603   ;   R7 = priority (1/2/3)
+084F            604   ; Behavior:
+084F            605   ;   If new priority >= current, override current pattern.
+084F            606   ;---------------------------------------------------------
+084F            607   Beep_Request:
+084F C0E0       608       push acc
+0851 C0D0       609       push psw
+0853            610   
+0853 E563       611       mov  a, buzz_priority
+0855 C3         612       clr  c
+0856 9F         613       subb a, R7
+0857 4004       614       jc   Beep_Accept
+0859 6002       615       jz   Beep_Accept
+085B 800D       616       sjmp Beep_Req_Done
+085D            617   
+085D            618   Beep_Accept:
+085D 8F63       619       mov  buzz_priority, R7
+085F 85F062     620       mov  buzz_beeps_left, B
+0862 756100     621       mov  buzz_timer, #0
+0865 756001     622       mov  buzz_state, #1      ; start ON now
+0868 D28C       623       setb TR0                 ; tone ON
+086A            624   
+086A            625   Beep_Req_Done:
+086A D0D0       626       pop  psw
+086C D0E0       627       pop  acc
+086E 22         628       ret
+086F            629   
+086F            630   ;---------------------------------------------------------
+086F            631   ; Buzzer_Task
+086F            632   ; - Call every loop
+086F            633   ; - Advances only when one_millisecond_flag is set
+086F            634   ;---------------------------------------------------------
+086F            635   Buzzer_Task:
+086F 100301     636       jbc  one_ms_buzz_flag, Buzzer_Step
+0872 22         637       ret
+0873            638   
+0873            639   Buzzer_Step:
+0873 E560       640       mov  a, buzz_state
+0875            641   
+0875            642   ; IDLE
+0875            643   Buzzer_State0:
+0875 B40008     644       cjne a, #0, Buzzer_State1
+0878 C28C       645       clr  TR0
+087A C295       646       clr  SOUND_OUT
+087C 756300     647       mov  buzz_priority, #0
+087F 22         648       ret
+0880            649   
+0880            650   ; ON phase
+0880            651   Buzzer_State1:
+0880 B40112     652       cjne a, #1, Buzzer_State2
+0883 0561       653       inc  buzz_timer
+0885 E561       654       mov  a, buzz_timer
+0887 B46430     655       cjne a, #BEEP_ON_MS, Buzzer_Done
+088A            656   
+088A            657       ; ON time elapsed -> go OFF
+088A 756100     658       mov  buzz_timer, #0
+088D 756002     659       mov  buzz_state, #2
+0890 C28C       660       clr  TR0
+0892 C295       661       clr  SOUND_OUT
+0894 22         662       ret
+0895            663   
+0895            664   ; OFF phase
+0895            665   Buzzer_State2:
+0895 0561       666       inc  buzz_timer
+0897 E561       667       mov  a, buzz_timer
+0899 B4641E     668       cjne a, #BEEP_OFF_MS, Buzzer_Done
+089C            669   
+089C            670       ; OFF time elapsed -> one beep finished
+089C 756100     671       mov  buzz_timer, #0
+089F            672   
+089F E562       673       mov  a, buzz_beeps_left
+08A1 600C       674       jz   Buzzer_GoIdle
+08A3 1562       675       dec  buzz_beeps_left
+08A5 E562       676       mov  a, buzz_beeps_left
+08A7 6006       677       jz   Buzzer_GoIdle
+08A9            678   
+08A9            679       ; start next beep
+08A9 756001     680       mov  buzz_state, #1
+08AC D28C       681       setb TR0
+08AE 22         682       ret
+08AF            683   
+08AF            684   Buzzer_GoIdle:
+08AF 756000     685       mov  buzz_state, #0
+08B2 C28C       686       clr  TR0
+08B4 C295       687       clr  SOUND_OUT
+08B6 756300     688       mov  buzz_priority, #0
+08B9 22         689       ret
+08BA            690   
+08BA            691   Buzzer_Done:
+08BA 22         692       ret
+08BB            693   ;---------------------------------------------------------
+08BB            694   
+08BB            695   ;-------------------------------------------------------------------------------;
+08BB            696   ; Temp_Compare
+08BB            697   ;
+08BB            698   ; PURPOSE:
+08BB            699   ;   Compare the current measured temperature against
+08BB            700   ;   the soak and reflow temperature setpoints.
+08BB            701   ;
+08BB            702   ; BEHAVIOR:
+08BB            703   ;   - If current_temp >= soak_temp   if soak_temp_reached   = 1
+08BB            704   ;   - If current_temp >= reflow_temp if reflow_temp_reached = 1
+08BB            705   ;
+08BB            706   ; NOTES:
+08BB            707   ;   - Uses 32-bit UNSIGNED comparison from math32.asm
+08BB            708   ;   - Comparison is done by:
+08BB            709   ;       x < y ?   (mf = 1)  if NOT reached
+08BB            710   ;       x >= y ?  (mf = 0)  if reached
+08BB            711   ;   - This routine ONLY SETS flags.
+08BB            712   ;     Clearing flags must be handled by the FSM.
+08BB            713   ;
+08BB            714   ; EXPECTED VARIABLES (DSEG / BSEG):
+08BB            715   ;   current_temp[4], soak_temp[4], reflow_temp[4]
+08BB            716   ;   x[4], y[4]
+08BB            717   ;   mf (math32 compare flag)
+08BB            718   ;   soak_temp_reached, reflow_temp_reached
+08BB            719   ;-------------------------------------------------------------------------------;
+08BB            720   Temp_Compare:
+08BB C0E0       721       push acc
+08BD C0D0       722       push psw
+08BF C000       723       push AR0
+08C1 C001       724       push AR1
+08C3 C002       725       push AR2
+08C5            726       
+08C5            727   ; Check: current_temp >= soak_temp ?
+08C5            728       ; Copy current_temp of x (math32 operand A)
+08C5 7847       729       mov  R0, #current_temp
+08C7 793A       730       mov  R1, #x
+08C9 120965     731       lcall Copy4_Bytes_R0_to_R1
+08CC            732   
+08CC            733       ; Copy soak_temp of y (math32 operand B)
+08CC 784B       734       mov  R0, #soak_temp
+08CE 793E       735       mov  R1, #y
+08D0 120965     736       lcall Copy4_Bytes_R0_to_R1
+08D3            737   
+08D3            738       ; Perform x < y comparison
+08D3            739       ; mf = 1 if current_temp < soak_temp  (NOT reached)
+08D3            740       ; mf = 0 if current_temp >= soak_temp (REACHED)
+08D3 12011A     741       lcall x_lt_y
+08D6 200002     742       jb   mf, Temp_Soak_NotReached
+08D9 D204       743       setb soak_temp_reached
+08DB            744   
+08DB            745   ; Check: current_temp >= reflow_temp ?
+08DB            746   Temp_Soak_NotReached:
+08DB            747       ; Copy current_temp of x
+08DB 7847       748       mov  R0, #current_temp
+08DD 793A       749       mov  R1, #x
+08DF 120965     750       lcall Copy4_Bytes_R0_to_R1
+08E2            751   
+08E2            752       ; Copy reflow_temp of y
+08E2 784F       753       mov  R0, #reflow_temp
+08E4 793E       754       mov  R1, #y
+08E6 120965     755       lcall Copy4_Bytes_R0_to_R1
+08E9            756   
+08E9            757       ; Compare x < y again
+08E9 12011A     758       lcall x_lt_y
+08EC 200002     759       jb   mf, Temp_Reflow_NotReached
+08EF D205       760       setb reflow_temp_reached
+08F1            761   
+08F1            762   Temp_Reflow_NotReached:
+08F1 D002       763       pop  AR2
+08F3 D001       764       pop  AR1
+08F5 D000       765       pop  AR0
+08F7 D0D0       766       pop  psw
+08F9 D0E0       767       pop  acc
+08FB 22         768       ret
+08FC            769   
+08FC            770   ;-------------------------------------------------------------------------------
+08FC            771   ; Time_Compare_MMSS
+08FC            772   ;
+08FC            773   ; PURPOSE:
+08FC            774   ;   Compare elapsed time (current_time_minute:current_time_sec)
+08FC            775   ;   against soak and reflow setpoints (soak_time_*, reflow_time_*).
+08FC            776   ;
+08FC            777   ; BEHAVIOR:
+08FC            778   ;   If current >= soak   -> set soak_time_reached
+08FC            779   ;   If current >= reflow -> set reflow_time_reached
+08FC            780   ;
+08FC            781   ; NOTES:
+08FC            782   ;   Compare minutes first, then seconds.
+08FC            783   ;-------------------------------------------------------------------------------
+08FC            784   Time_Compare_MMSS:
+08FC C0E0       785       push acc
+08FE C0D0       786       push psw
+0900            787   
+0900 E55F       788            mov a, Control_FSM_state
+0902 B4032C     789            cjne a, #3, TC_Not_Soak
+0905            790   ; soak state time comparison
+0905 100F02     791            jbc state_change_signal_TC, TC_Soak_Start_Record
+0908 8013       792            sjmp TC_Soak_Comparing
+090A            793   
+090A            794   TC_Soak_Start_Record:
+090A E531       795            mov a, current_time_minute
+090C 2533       796            add a, soak_time_minute
+090E F537       797            mov soak_end_time_minute, a
+0910            798   
+0910 E530       799            mov a, current_time_sec
+0912 2532       800            add a, soak_time_sec
+0914 F536       801            mov soak_end_time_sec, a
+0916 C3         802            clr c
+0917 943C       803            subb a, #60
+0919            804   
+0919 F536       805            mov soak_end_time_sec, a
+091B 0537       806            inc soak_end_time_minute
+091D            807   
+091D            808   TC_Soak_Comparing:
+091D E537       809       mov  a, soak_end_time_minute
+091F C3         810       clr  c
+0920 9531       811       subb a, current_time_minute
+0922 403C       812            jc   TC_Done                   ; current_min < end_min
+0924 7007       813       jnz  TC_Soak_Reached           ; current_min > end_min
+0926            814   
+0926            815       ; minutes equal -> compare seconds
+0926 E536       816       mov  a, soak_end_time_sec
+0928 C3         817       clr  c
+0929 9530       818       subb a, current_time_sec
+092B 7033       819       jnz   TC_Done
+092D            820   
+092D            821   TC_Soak_Reached:
+092D D207       822       setb soak_time_reached
+092F 802F       823            sjmp TC_Done
+0931            824   
+0931            825   TC_Not_Soak:
+0931 E55F       826            mov a, Control_FSM_state
+0933 B4052A     827            cjne a, #5, TC_Done
+0936            828   ; soak state time comparison
+0936 100F02     829            jbc state_change_signal_TC, TC_Reflow_Start_Record
+0939 8013       830            sjmp TC_Reflow_Comparing
+093B            831   
+093B            832   TC_Reflow_Start_Record:
+093B E531       833            mov a, current_time_minute
+093D 2535       834            add a, reflow_time_minute
+093F F539       835            mov reflow_end_time_minute, a
+0941            836   
+0941 E530       837            mov a, current_time_sec
+0943 2534       838            add a, reflow_time_sec
+0945 F538       839            mov reflow_end_time_sec, a
+0947 C3         840            clr c
+0948 943C       841            subb a, #60
+094A            842   
+094A F538       843            mov reflow_end_time_sec, a
+094C 0539       844            inc reflow_end_time_minute
+094E            845   
+094E            846   TC_Reflow_Comparing:
+094E E539       847       mov  a, reflow_end_time_minute
+0950 C3         848       clr  c
+0951 9531       849       subb a, current_time_minute
+0953 400B       850       jc   TC_Done
+0955 7007       851       jnz  TC_Reflow_Reached
+0957            852   
+0957 E538       853       mov  a, reflow_end_time_sec
+0959 C3         854       clr  c
+095A 9530       855       subb a, current_time_sec
+095C 4002       856            jc   TC_Done
+095E            857   
+095E            858   TC_Reflow_Reached:
+095E D208       859       setb reflow_time_reached
+0960            860   
+0960            861   TC_Done:
+0960 D0D0       862       pop  psw
+0962 D0E0       863       pop  acc
+0964 22         864       ret
+0965            865   
+0965            866   ;-------------------------------------------------------------------------------;
+0965            867   ; Copy4_Bytes_R0_to_R1
+0965            868   ;
+0965            869   ; PURPOSE:
+0965            870   ;   Utility routine to copy a 32-bit value (4 bytes)
+0965            871   ;   from one memory location to another.
+0965            872   ;
+0965            873   ; INPUTS:
+0965            874   ;   R0 st source address
+0965            875   ;   R1 at destination address
+0965            876   ;
+0965            877   ; USES:
+0965            878   ;   R2 as loop counter
+0965            879   ;
+0965            880   ; EXAMPLE:
+0965            881   ;   mov R0, #current_temp
+0965            882   ;   mov R1, #x
+0965            883   ;   lcall Copy4_Bytes_R0_to_R1
+0965            884   ;-------------------------------------------------------------------------------;
+0965            885   Copy4_Bytes_R0_to_R1:
+0965 7A04       886       mov  R2, #4
+0967            887   Copy4_Loop:
+0967 E6         888       mov  a, @R0
+0968 F7         889       mov  @R1, a
+0969 08         890       inc  R0
+096A 09         891       inc  R1
+096B DAFA       892       djnz R2, Copy4_Loop
+096D 22         893       ret
+096E            894   
+096E            895   ;-------------------------------------------------------------------------------;
+096E            896   ; Abort condition safety check Temperature time
+096E            897   ;
+096E            898   ; PURPOSE:
+096E            899   ;   Automatic cycle termination on error:
+096E            900   ;   Abort if oven fails to reach at least 50C in first 60s.
+096E            901   ;
+096E            902   ; TRIP CONDITION:
+096E            903   ;   if (current_time >= 60s) AND (current_temp < 50C)
+096E            904   ;       -> set tc_missing_abort
+096E            905   ;       -> set stop_signal
+096E            906   ;
+096E            907   ; ASSUMPTIONS:
+096E            908   ;   - current_time is in SECONDS (32-bit, little-endian)
+096E            909   ;   - current_temp is in DEGREES C (integer, 32-bit, little-endian)
+096E            910   ;
+096E            911   ;   the Load_Y constants accordingly.
+096E            912   ;-------------------------------------------------------------------------------;
+096E            913   Safety_Check_TC:
+096E C0E0       914       push acc
+0970 C0D0       915       push psw
+0972 C000       916       push AR0
+0974 C001       917       push AR1
+0976 C002       918       push AR2
+0978            919   
+0978            920       ; If already aborted or startup window closed, do nothing
+0978 20122F     921       jb   tc_missing_abort, Safety_TC_Done
+097B 30132C     922       jnb  tc_startup_window, Safety_TC_Done
+097E            923   
+097E            924       ; Check: elapsed >= 60 seconds ?
+097E E531       925       mov  a, current_time_minute
+0980 7007       926       jnz  Safety_TC_At60          ; if minute >= 1, definitely >=60s
+0982            927   
+0982 E530       928       mov  a, current_time_sec
+0984 C3         929       clr  c
+0985 943C       930       subb a, #60
+0987 4021       931       jc   Safety_TC_Done          ; still < 60s
+0989            932   
+0989            933   Safety_TC_At60:
+0989            934   
+0989            935       ; We reached 60s: close the startup window so it won't re-check later
+0989 C213       936       clr  tc_startup_window
+098B            937   
+098B            938       ; Now check: current_temp < 50 ?
+098B 7847       939       mov  R0, #current_temp
+098D 793A       940       mov  R1, #x
+098F 120965     941       lcall Copy4_Bytes_R0_to_R1
+0992            942   
+0992 753E32     943            mov y+0, #low (50 % 0x10000) 
+0995 753F00     943            mov y+1, #high(50 % 0x10000) 
+0998 754000     943            mov y+2, #low (50 / 0x10000) 
+099B 754100     943            mov y+3, #high(50 / 0x10000) 
+099E 12011A     944       lcall x_lt_y
+09A1 300006     945       jnb  mf, Safety_TC_Done        ; temp >= 50 → pass
+09A4            946   
+09A4            947       ; FAIL: at 60s, still below 50C → abort
+09A4 D212       948       setb tc_missing_abort
+09A6 D20A       949       setb stop_signal
+09A8 C293       950       clr  PWM_OUT
+09AA            951   
+09AA            952   Safety_TC_Done:
+09AA D002       953       pop  AR2
+09AC D001       954       pop  AR1
+09AE D000       955       pop  AR0
+09B0 D0D0       956       pop  psw
+09B2 D0E0       957       pop  acc
+09B4 22         958       ret
+09B5            959   
+09B5            960   ;-------------------------------------------------------------------------------;
+09B5            961   ; Main Control FSM for the entire process
+09B5            962   ;-------------------------------------------------------------------------------;
+09B5            963   Control_FSM:
+09B5 E55F       964            mov a, Control_FSM_state
+09B7 8009       965            sjmp Control_FSM_state0
+09B9            966   
+09B9            967   Control_FSM_state0_a:
+09B9 755F00     968            mov Control_FSM_state, #0
+09BC C214       969            clr PB0_flag
+09BE D20E       970            setb state_change_signal
+09C0 D20F       971            setb state_change_signal_TC
+09C2            972   Control_FSM_state0:
+09C2 B4000B     973            cjne a, #0, Control_FSM_state1
+09C5 101402     974            jbc PB0_flag, Control_FSM_state1_a
+09C8 8078       975            sjmp Control_FSM_done
+09CA            976   
+09CA            977   Control_FSM_state1_a:
+09CA 055F       978            inc Control_FSM_state
+09CC D20E       979            setb state_change_signal
+09CE D20F       980            setb state_change_signal_TC
+09D0            981   Control_FSM_state1:
+09D0 B40112     982            cjne a, #1, Control_FSM_state2
+09D3 101502     983            jbc PB1_flag, Control_FSM_state1_b
+09D6 806A       984            sjmp Control_FSM_done
+09D8            985   Control_FSM_state1_b:
+09D8 100D02     986            jbc config_finish_signal, Control_FSM_state2_a
+09DB 8065       987            sjmp Control_FSM_done
+09DD            988   
+09DD            989   Control_FSM_state2_a:
+09DD 055F       990            inc Control_FSM_state
+09DF D20E       991            setb state_change_signal
+09E1 D20F       992            setb state_change_signal_TC
+09E3 D210       993            setb state_change_signal_Count
+09E5            994   Control_FSM_state2:
+09E5 B4020E     995            cjne a, #2, Control_FSM_state3
+09E8 101638     996            jbc PB2_flag, Control_FSM_state6_a
+09EB 100402     997            jbc soak_temp_reached, Control_FSM_state3_a
+09EE 8052       998            sjmp Control_FSM_done
+09F0            999   
+09F0           1000   Control_FSM_state3_a:
+09F0 055F      1001            inc Control_FSM_state
+09F2 D20E      1002            setb state_change_signal
+09F4 D20F      1003            setb state_change_signal_TC
+09F6           1004   Control_FSM_state3:
+09F6 B4030E    1005            cjne a, #3, Control_FSM_state4
+09F9 101627    1006            jbc PB2_flag, Control_FSM_state6_a
+09FC 100702    1007            jbc soak_time_reached, Control_FSM_state4_a
+09FF 8041      1008            sjmp Control_FSM_done
+0A01           1009   
+0A01           1010   Control_FSM_state4_a:
+0A01 055F      1011            inc Control_FSM_state   
+0A03 D20E      1012            setb state_change_signal
+0A05 D20F      1013            setb state_change_signal_TC
+0A07           1014   Control_FSM_state4:
+0A07 B4040E    1015            cjne a, #4, Control_FSM_state5
+0A0A 101616    1016            jbc PB2_flag, Control_FSM_state6_a
+0A0D 100502    1017            jbc reflow_temp_reached, Control_FSM_state5_a
+0A10 8030      1018            sjmp Control_FSM_done
+0A12           1019   
+0A12           1020   Control_FSM_state5_a:
+0A12 055F      1021            inc Control_FSM_state
+0A14 D20E      1022            setb state_change_signal
+0A16 D20F      1023            setb state_change_signal_TC
+0A18           1024   Control_FSM_state5:
+0A18 B40510    1025            cjne a, #5, Control_FSM_state6
+0A1B 101605    1026            jbc PB2_flag, Control_FSM_state6_a
+0A1E 100802    1027            jbc reflow_time_reached, Control_FSM_state6_a
+0A21 801F      1028            sjmp Control_FSM_done
+0A23           1029   
+0A23           1030   Control_FSM_state6_a:
+0A23 055F      1031            inc Control_FSM_state
+0A25 D20E      1032            setb state_change_signal
+0A27 D20F      1033            setb state_change_signal_TC
+0A29 D210      1034            setb state_change_signal_Count
+0A2B           1035   Control_FSM_state6:
+0A2B B40614    1036            cjne a, #6, Control_FSM_done
+0A2E 100602    1037            jbc cooling_temp_reached, Control_FSM_state7_a
+0A31 800F      1038            sjmp Control_FSM_done
+0A33           1039   
+0A33           1040   Control_FSM_state7_a:
+0A33 055F      1041            inc Control_FSM_state
+0A35 D20E      1042            setb state_change_signal
+0A37 D20F      1043            setb state_change_signal_TC
+0A39           1044   Control_FSM_state7:
+0A39 B40706    1045            cjne a, #7, Control_FSM_done
+0A3C 301403    1046            jnb PB0_flag, Control_FSM_done
+0A3F 0209B9    1047            ljmp Control_FSM_state0_a
+0A42           1048   
+0A42           1049   Control_FSM_done:
+0A42 22        1050            ret
+0A43           1051   ;-------------------------------------------------------------------------------;
+0A43           1052   ;         Main program.          
+0A43           1053   ;-------------------------------------------------------------------------------;
+0A43           1054   main:
+0A43           1055            ; Initialization
+0A43 75817F    1056       mov SP, #0x7F
+0A46           1057   
+0A46           1058            ; We use the pins of P0 to control the LCD.  Configure as outputs.
+0A46 759A7F    1059       mov P0MOD, #01111111b ; P0.0 to P0.6 are outputs.  ('1' makes the pin output)
+0A49           1060       ; We use pins P1.5 and P1.1 as outputs also.  Configure accordingly.
+0A49 759B22    1061       mov P1MOD, #00100010b ; P1.5 and P1.1 are outputs
+0A4C 759CFF    1062       mov P2MOD, #0xff
+0A4F 759DFF    1063       mov P3MOD, #0xff
+0A52           1064       ; Turn off all the LEDs
+0A52 75E800    1065       mov LEDRA, #0 ; LEDRA is bit addressable
+0A55 759500    1066       mov LEDRB, #0 ; LEDRB is NOT bit addresable
+0A58           1067   
+0A58           1068            ; Enable Global interrupts
+0A58 D2AF      1069       setb EA  
+0A5A           1070   
+0A5A           1071            ; FSM initial states
+0A5A 755D00    1072            mov KEY1_DEB_state, #0
+0A5D 755E00    1073            mov SEC_FSM_state, #0
+0A60 755F00    1074            mov Control_FSM_state, #0
+0A63           1075            ; FSM timers initialization
+0A63 755B00    1076            mov KEY1_DEB_timer, #0
+0A66 755C00    1077            mov SEC_FSM_timer, #0
+0A69           1078            ; time counters initialization
+0A69 753000    1079            mov current_time_sec, #0
+0A6C 753100    1080            mov current_time_minute, #0
+0A6F 753200    1081            mov soak_time_sec, #0
+0A72 753300    1082            mov soak_time_minute, #0
+0A75 753400    1083            mov reflow_time_sec, #0
+0A78 753500    1084            mov reflow_time_minute, #0
+0A7B 753600    1085            mov soak_end_time_sec, #0
+0A7E 753700    1086            mov soak_end_time_minute, #0
+0A81 753800    1087            mov reflow_end_time_sec, #0
+0A84 753900    1088            mov reflow_end_time_minute, #0
+0A87           1089   
+0A87           1090            ; Initialize counter to zero
+0A87 755700    1091       mov pwm_counter, #0
+0A8A 755800    1092            mov pwm_counter+1, #0
+0A8D 755900    1093            mov pwm_counter+2, #0
+0A90 755A00    1094            mov pwm_counter+3, #0
+0A93           1095            ; Initialize power output
+0A93 755600    1096            mov power_output+3, #0
+0A96 755500    1097            mov power_output+2, #0
+0A99 755402    1098            mov power_output+1, #02H
+0A9C 7553EE    1099            mov power_output, #0EEH ; (initilize to 750 for testing)
+0A9F           1100   
+0A9F           1101            ; Clear all the flags
+0A9F C295      1102            clr SOUND_OUT
+0AA1 C212      1103            clr tc_missing_abort
+0AA3 C20A      1104            clr stop_signal
+0AA5 C214      1105            clr PB0_flag
+0AA7 C215      1106            clr PB1_flag
+0AA9 C216      1107            clr PB2_flag
+0AAB C201      1108            clr one_second_lcd_flag
+0AAD C20D      1109            clr config_finish_signal
+0AAF C204      1110            clr soak_temp_reached
+0AB1 C207      1111            clr soak_time_reached
+0AB3 C205      1112            clr reflow_temp_reached
+0AB5 C208      1113            clr reflow_time_reached
+0AB7 C206      1114            clr cooling_temp_reached
+0AB9 C20E      1115            clr state_change_signal
+0ABB C20F      1116            clr state_change_signal_TC
+0ABD C210      1117            clr state_change_signal_Count
+0ABF C20C      1118            clr time_count_doing_signal
+0AC1           1119   
+0AC1           1120            ; Set bit
+0AC1 D213      1121            setb tc_startup_window
+0AC3           1122   
+0AC3 120401    1123            lcall Timer0_Init
+0AC6 12046B    1124       lcall Timer2_Init
+0AC9 1204EE    1125            lcall ELCD_4BIT
+0ACC 12041D    1126            lcall Initialize_Serial_Port
+0ACF           1127   ;-------------------------------------------------------------------------------;
+0ACF           1128   ; while(1) loop
+0ACF           1129   ;-------------------------------------------------------------------------------;
+0ACF           1130   loop:
+0ACF           1131            ; Check the FSM for KEY1 debounce
+0ACF 120706    1132            lcall KEY1_DEB
+0AD2           1133   
+0AD2           1134            ; Check the FSM for the overall control flow of the reflow process
+0AD2 1209B5    1135            lcall Control_FSM
+0AD5           1136   
+0AD5           1137            ; Update the LCD display based on the current state
+0AD5 12059E    1138            lcall LCD_Display_Update_func
+0AD8           1139   
+0AD8           1140            ; Update the pwm output for the ssr
+0AD8 1207BD    1141            lcall PWM_Wave 
+0ADB           1142   
+0ADB 120793    1143            lcall Time_Counter
+0ADE           1144   
+0ADE 1206D7    1145            lcall LCD_Display_Update_Time
+0AE1           1146   
+0AE1 1208FC    1147            lcall Time_Compare_MMSS
+0AE4           1148   
+0AE4           1149            ; After initialization the program stays in this 'forever' loop
+0AE4 020ACF    1150            ljmp loop
+0AE7           1151   ;-------------------------------------------------------------------------------;
+0AE7           1152   
+0AE7           1153   END
