@@ -26,6 +26,9 @@ org 0x002B
 ; includes
 $NOLIST
 $include(..\inc\MODMAX10)
+;ADC_C DATA 0xa1
+;ADC_L DATA 0xa2
+;ADC_H DATA 0xa3
 $include(..\inc\math32.asm) ; 
 $LIST
 ; ----------------------------------------------------------------------------------------------;
@@ -584,6 +587,12 @@ end_pwm_generator:
 ;   soak_temp_reached, reflow_temp_reached
 ;-------------------------------------------------------------------------------;
 Temp_Compare:
+
+    ; --- ADD THESE 2 LINES ---
+    clr soak_temp_reached
+    clr reflow_temp_reached
+    ; -------------------------
+
     push acc
     push psw
     push AR0
@@ -804,26 +813,43 @@ Control_FSM:
 Control_FSM_state0_a:
 	mov Control_FSM_state, #0
 	setb state_change_signal
+	
 Control_FSM_state0:
-	cjne a, #0, Control_FSM_state1
-	jb P1.0, Control_FSM_done
-	lcall Wait_For_P1_0_Release
-	sjmp Control_FSM_state1_a
+    cjne a, #0, Control_FSM_state1
+    jb P1.0, Control_FSM_done_bridge
+    lcall Wait_For_P1_0_Release
+    sjmp Control_FSM_state1_a  
+    
+   
+; BRIDGE: Local exit to help shorter jumps reach the end
+Control_FSM_done_bridge:
+    ret
 
 Control_FSM_state1_a:
 	inc Control_FSM_state
+	
+	mov Current_State, #0
+	lcall Update_Screen_Full 
+	
 	setb state_change_signal
+	
+	mov a, Control_FSM_state
+	
 Control_FSM_state1:
-	cjne a, #1, Control_FSM_state2
-	; --- ENABLE USER INPUT ---
-    lcall Check_Buttons ; <--- New to poll user
+    cjne a, #1, Control_FSM_state2
+    ; --- ENABLE USER INPUT ---
+    lcall Check_Buttons 
     lcall Check_Keypad
     ; ----------------------------
-	jbc PB1_flag, Control_FSM_state1_b
-	sjmp Control_FSM_done
+    
+    ; FIX: Check P1.0. If Low (0/Pressed), jump to 1_b
+    jnb P1.0, Control_FSM_state1_b
+    ret ; Exit if button not pressed
+
 Control_FSM_state1_b:
-	lcall Update_FSM_Variables ; <-- Added line for new function 	
-	sjmp Control_FSM_state2_a ;<-- got rid of a line or else would be stuck in a loop
+    lcall Wait_For_P1_0_Release  ; Wait for finger to leave
+    lcall Update_FSM_Variables   ; Save the numbers
+    sjmp Control_FSM_state2_a    ; GO!
 
 Control_FSM_state2_a:
 	inc Control_FSM_state
@@ -832,7 +858,7 @@ Control_FSM_state2:
 	cjne a, #2, Control_FSM_state3
 	jbc PB2_flag, Control_FSM_state6_a
 	jbc soak_temp_reached, Control_FSM_state3_a
-	sjmp Control_FSM_done
+	ret
 
 Control_FSM_state3_a:
 	inc Control_FSM_state
@@ -841,7 +867,7 @@ Control_FSM_state3:
 	cjne a, #3, Control_FSM_state4
 	jbc PB2_flag, Control_FSM_state6_a
 	jbc soak_time_reached, Control_FSM_state4_a
-	sjmp Control_FSM_done
+	ret
 
 Control_FSM_state4_a:
 	inc Control_FSM_state	
@@ -850,7 +876,7 @@ Control_FSM_state4:
 	cjne a, #4, Control_FSM_state5
 	jbc PB2_flag, Control_FSM_state6_a
 	jbc reflow_temp_reached, Control_FSM_state5_a
-	sjmp Control_FSM_done
+	ret
 
 Control_FSM_state5_a:
 	inc Control_FSM_state
@@ -859,7 +885,7 @@ Control_FSM_state5:
 	cjne a, #5, Control_FSM_state6
 	jbc PB2_flag, Control_FSM_state6_a
 	jbc reflow_time_reached, Control_FSM_state6_a
-	sjmp Control_FSM_done
+	ret
 
 Control_FSM_state6_a:
 	inc Control_FSM_state
@@ -867,7 +893,7 @@ Control_FSM_state6_a:
 Control_FSM_state6:
 	cjne a, #6, Control_FSM_done
 	jbc cooling_temp_reached, Control_FSM_state7_a
-	sjmp Control_FSM_done
+	ret
 
 Control_FSM_state7_a:
 	inc Control_FSM_state
@@ -875,7 +901,7 @@ Control_FSM_state7_a:
 Control_FSM_state7:
 	cjne a, #7, Control_FSM_done
 	jbc PB0_flag, Control_FSM_state0_a
-	sjmp Control_FSM_done
+	ret
 
 Control_FSM_done:
 	ret
@@ -884,7 +910,7 @@ Control_FSM_done:
 ;-------------------------------------------------------------------------------;
 main:
 	; Initialization
-    mov SP, #0x7F
+    mov SP, #0xC0 
 
 ; --- PORT CONFIGURATION (Changed bc old config. didn't have correct button inputs) ---
     ; P0: Odd=LCD(Out), Even=Buttons(In) 
@@ -917,6 +943,8 @@ main:
 	mov KEY1_DEB_state, #0
 	mov SEC_FSM_state, #0
 	mov Control_FSM_state, #0
+	mov Current_State, #0
+	
 	; FSM timers initialization
 	mov KEY1_DEB_timer, #0
 	mov SEC_FSM_timer, #0
@@ -948,6 +976,8 @@ main:
 	clr reflow_time_reached
 	clr cooling_temp_reached
 	clr state_change_signal
+	
+	setb state_change_signal
 
 	; Set bit
 	setb tc_startup_window
@@ -966,6 +996,20 @@ main:
 loop:
 	; Check the FSM for KEY1 debounce
 	lcall KEY1_DEB
+	
+	; Added to take temp readings
+	lcall Read_Thermocouple
+	
+	; 1. Check if we reached temp (Observer)
+	lcall Temp_Compare
+	
+	; 2. Decide heater power based on flags (Driver)
+	lcall Power_Control
+	
+	lcall Time_Compare
+    
+	lcall Safety_Check_TC
+
 
 	; Check the FSM for one second counter
 	lcall SEC_FSM
@@ -1093,6 +1137,11 @@ Parse_Time_String:
 ; MODULE: BUTTON HANDLER (Mode Selection)
 ; ----------------------------------------------------------------
 Check_Buttons:
+    ; --- FORCE INPUT MODE ---
+    ; This clears any '0' the LCD library might have written to our buttons
+    orl P0, #055H   ; Sets P0.0, P0.2, P0.4, and P0.6 to '1' (Input Mode)
+    ; ------------------------
+
     jnb BTN_SOAK_TEMP, Btn_Soak_Temp_Press
     jnb BTN_SOAK_TIME, Btn_Soak_Time_Press
     jnb BTN_REFL_TEMP, Btn_Refl_Temp_Press
@@ -1523,6 +1572,100 @@ Get_Buf_4:
 ; --- Helper to prevent "Machine Gun" button presses ---
 Wait_For_P1_0_Release:
     jnb P1.0, $    ; Wait here while the button is still pressed (0)
+    ret
+    
+    
+; ================================================================
+; MODULE: THERMOCOUPLE ADC DRIVER (5V REFERENCE)
+; ================================================================
+Read_Thermocouple:
+    ; 1. Initialize ADC & Delay
+    mov ADC_C, #0x80    ; Reset ADC
+    lcall Wait_25ms     ; Reuse existing wait to let signals settle
+
+    ; 2. Read Channel 0 (AIN0)
+    mov ADC_C, #0x00    ; <--- Select Channel 0
+    
+    ; 3. Get the Raw Count (0 to 4095)
+    mov x+0, ADC_L
+    mov x+1, ADC_H
+    mov x+2, #0
+    mov x+3, #0
+    
+    ; 4. Math: Convert Count to Voltage (mV)
+    ; Formula: mV = (ADC_Count * 5000) / 4095
+    ; (Because Max Count 4095 = 5000 mV)
+    
+    Load_y(5000)        ; Load 5000 mV
+    lcall mul32         ; x = Count * 5000
+    
+    Load_y(4095)        ; Load Max resolution
+    lcall div32         ; x = Voltage in mV (e.g. 2500 = 2.5V)
+
+    ; 5. Math: Convert Voltage to Temperature
+    ; --- CHECK YOUR OP-AMP GAIN HERE ---
+    ; If 1 degree C = 10mV output: Divide by 10.
+    ; If 1 degree C = 5mV output (AD8495): Divide by 5.
+    
+    Load_y(10)          
+    lcall div32
+    
+    ; 6. Store Result
+    mov current_temp+0, x+0
+    mov current_temp+1, x+1
+    mov current_temp+2, x+2
+    mov current_temp+3, x+3
+    
+    ret
+    
+; ================================================================
+; MODULE: POWER CONTROLLER (The Brain)
+; ================================================================
+Power_Control:
+    ; Default: Turn Heat OFF (Safety)
+    mov power_output+0, #0
+    mov power_output+1, #0
+    mov power_output+2, #0
+    mov power_output+3, #0
+
+    mov a, Control_FSM_state
+
+    ; --- State 2: RAMP TO SOAK ---
+    cjne a, #2, PC_Check_Soak
+    ; We are ramping. We haven't reached temp yet (or FSM would have moved).
+    ; FULL POWER!
+    sjmp Set_Max_Power
+
+PC_Check_Soak:
+    ; --- State 3: SOAK PHASE ---
+    cjne a, #3, PC_Check_Ramp_Reflow
+    ; Bang-Bang Control:
+    ; If Flag=1 (Hot enough), Power=0 (Default).
+    ; If Flag=0 (Too cold), Power=100%.
+    jb soak_temp_reached, PC_Done
+    sjmp Set_Max_Power
+
+PC_Check_Ramp_Reflow:
+    ; --- State 4: RAMP TO REFLOW ---
+    cjne a, #4, PC_Check_Reflow
+    sjmp Set_Max_Power
+
+PC_Check_Reflow:
+    ; --- State 5: REFLOW PHASE ---
+    cjne a, #5, PC_Done
+    jb reflow_temp_reached, PC_Done
+    sjmp Set_Max_Power
+
+PC_Done:
+    ret
+
+; --- Helper to set 100% Power ---
+Set_Max_Power:
+    ; Load 1000 (0x03E8) into power_output
+    mov power_output+0, #0xE8
+    mov power_output+1, #0x03
+    mov power_output+2, #0
+    mov power_output+3, #0
     ret
 
 END
