@@ -34,6 +34,11 @@ $LIST
 dseg at 0x30
 current_time_sec:     ds 1
 current_time_minute:  ds 1
+soak_time_sec:        ds 1
+soak_time_minute:     ds 1
+reflow_time_sec:      ds 1
+reflow_time_minute:   ds 1
+
 ; math32 buffer variables
 x:		ds	4
 y:		ds	4
@@ -43,10 +48,6 @@ current_temp: ds 4 ;
 soak_temp:    ds 4 ;
 reflow_temp:  ds 4 ;
 
-current_time: ds 4 ;
-soak_time:    ds 4 ;
-reflow_time:  ds 4 ;
-
 power_output:  ds 4 ;
 pwm_counter: ds 4 ; counter for pwm (0-1500)
 
@@ -55,6 +56,15 @@ SEC_FSM_timer:  ds 1
 KEY1_DEB_state:    ds 1
 SEC_FSM_state: 	   ds 1
 Control_FSM_state: ds 1 
+
+;------------------------------
+; Buzzer module variables
+;------------------------------
+buzz_state:      ds 1   ; 0=IDLE, 1=ON, 2=OFF
+buzz_timer:      ds 1   ; counts ms within ON/OFF window
+buzz_beeps_left: ds 1   ; how many beeps remaining
+buzz_priority:   ds 1   ; 0 none, 1=state, 2=done, 3=error
+
 ; 46d bytes used
 
 ;-------------------------------------------------------------------------------
@@ -63,6 +73,7 @@ bseg
 mf:		dbit 1 ; math32 sign
 one_second_flag: dbit 1
 one_millisecond_flag: dbit 1 ; one_millisecond_flag for pwm signal
+one_millisecond_flag_buzz: dbit 1 ; one_millisecond_flag for buzz
 
 soak_temp_reached: dbit 1
 reflow_temp_reached: dbit 1
@@ -100,6 +111,9 @@ TIMER2_RATE    EQU 1000     ; 1000Hz, for a timer tick of 1ms
 TIMER2_RELOAD  EQU ((65536-(CLK/(12*TIMER2_RATE))))
 
 PWM_PERIOD     EQU 1499 ; 1.5s period
+BEEP_ON_MS	   EQU 100  ; 100ms
+BEEP_OFF_MS    EQU 100  ; 100ms
+
 
 SOUND_OUT      EQU P1.5 ; Pin connected to the speaker
 
@@ -152,9 +166,11 @@ Timer0_Init:
 	mov TH0, #high(TIMER0_RELOAD)
 	mov TL0, #low(TIMER0_RELOAD)
 	; Enable the timer and interrupts
-    setb ET0  ; Enable timer 0 interrupt
-    setb TR0  ; Start timer 0
-	ret
+    setb ET0        ; Enable timer 0 interrupt
+    clr  TR0        ; DO NOT start tone by default (buzzer task controls this)
+    clr  SOUND_OUT  ; keep buzzer pin low when off
+    ret
+
 ; ISR for timer 0.  Set to execute every 1/4096Hz 
 ; to generate a 2048 Hz square wave at pin P1.5 
 Timer0_ISR:
@@ -248,6 +264,7 @@ Timer2_ISR:
 	inc SEC_FSM_timer
 
 	setb one_millisecond_flag ; set the one millisecond flag
+	setb one_millisecond_flag_buzz ; set the one millisecond flag for buzz
 
 Timer2_ISR_done:
 	pop psw
@@ -448,12 +465,18 @@ SEC_FSM_state3:
 	mov SEC_FSM_timer, #0
 	mov SEC_FSM_state, #0
 	mov a, current_time_sec
-	cjne a, #59, IncCurrentTimeSec ; Don't let the seconds counter pass 59
-	mov current_time_sec, #0
-	sjmp SEC_FSM_done
+    cjne a, #59, IncCurrentTimeSec
+
+    ; seconds reached 59 -> wrap to 0 and increment minutes
+    mov current_time_sec, #0
+    inc current_time_minute
+    cpl LEDRA.0
+    sjmp SEC_FSM_done
+
 IncCurrentTimeSec:
-	inc current_time_sec
-	cpl LEDRA.0 ; 1 Hz heartbeat LED
+    inc current_time_sec
+    cpl LEDRA.0
+
 SEC_FSM_done:
 	ret
 
@@ -522,160 +545,186 @@ set_pwm_high:
 end_pwm_generator:
 	ret
 
-;-------------------------------------------------------------------------------;
-; Temp_Compare
-;
-; PURPOSE:
-;   Compare the current measured temperature against
-;   the soak and reflow temperature setpoints.
-;
-; BEHAVIOR:
-;   - If current_temp >= soak_temp   if soak_temp_reached   = 1
-;   - If current_temp >= reflow_temp if reflow_temp_reached = 1
-;
-; NOTES:
-;   - Uses 32-bit UNSIGNED comparison from math32.asm
-;   - Comparison is done by:
-;       x < y ?   (mf = 1)  if NOT reached
-;       x >= y ?  (mf = 0)  if reached
-;   - This routine ONLY SETS flags.
-;     Clearing flags must be handled by the FSM.
-;
-; EXPECTED VARIABLES (DSEG / BSEG):
-;   current_temp[4], soak_temp[4], reflow_temp[4]
-;   x[4], y[4]
-;   mf (math32 compare flag)
-;   soak_temp_reached, reflow_temp_reached
-;-------------------------------------------------------------------------------;
-Temp_Compare:
+;-------------------------------------------------------------------------------
+; BUZZER MODULE (non-blocking)
+; Public API:
+;   lcall Beep_StateChange   ; 1 beep  (priority 1)
+;   lcall Beep_Done          ; 5 beeps (priority 2)
+;   lcall Beep_Error         ; 10 beeps(priority 3)
+; Background task:
+;   lcall Buzzer_Task        ; call every loop
+;-------------------------------------------------------------------------------
+
+Beep_StateChange:
+    mov  B,  #1
+    mov  R7, #1
+    lcall Beep_Request
+    ret
+
+Beep_Done:
+    mov  B,  #5
+    mov  R7, #2
+    lcall Beep_Request
+    ret
+
+Beep_Error:
+    mov  B,  #10
+    mov  R7, #3
+    lcall Beep_Request
+    ret
+
+;---------------------------------------------------------
+; Beep_Request
+; Inputs:
+;   B  = number of beeps
+;   R7 = priority (1/2/3)
+; Behavior:
+;   If new priority >= current, override current pattern.
+;---------------------------------------------------------
+Beep_Request:
     push acc
     push psw
-    push AR0
-    push AR1
-    push AR2
-;-------------------------------------------------------------------------------;
-    ; Check: current_temp >= soak_temp ?
-;-------------------------------------------------------------------------------;
-    ; Copy current_temp of x (math32 operand A)
-    mov  R0, #current_temp
-    mov  R1, #x
-    lcall Copy4_Bytes_R0_to_R1
 
-    ; Copy soak_temp of y (math32 operand B)
-    mov  R0, #soak_temp
-    mov  R1, #y
-    lcall Copy4_Bytes_R0_to_R1
+    mov  a, buzz_priority
+    clr  c
+    subb a, R7
+    jc   Beep_Accept
+    jz   Beep_Accept
+    sjmp Beep_Req_Done
 
-    ; Perform x < y comparison
-    ; mf = 1 if current_temp < soak_temp  (NOT reached)
-    ; mf = 0 if current_temp >= soak_temp (REACHED)
-    lcall x_lt_y
-    jb   mf, Temp_Soak_NotReached
-    setb soak_temp_reached
+Beep_Accept:
+    mov  buzz_priority, R7
+    mov  buzz_beeps_left, B
+    mov  buzz_timer, #0
+    mov  buzz_state, #1      ; start ON now
+    setb TR0                 ; tone ON
 
-;-------------------------------------------------------------------------------;
-Temp_Soak_NotReached:
-;-------------------------------------------------------------------------------;
-    ; Check: current_temp >= reflow_temp ?
-;-------------------------------------------------------------------------------;
-    ; Copy current_temp of x
-    mov  R0, #current_temp
-    mov  R1, #x
-    lcall Copy4_Bytes_R0_to_R1
-
-    ; Copy reflow_temp of y
-    mov  R0, #reflow_temp
-    mov  R1, #y
-    lcall Copy4_Bytes_R0_to_R1
-
-    ; Compare x < y again
-    lcall x_lt_y
-    jb   mf, Temp_Reflow_NotReached
-    setb reflow_temp_reached
-
-;-------------------------------------------------------------------------------;
-Temp_Reflow_NotReached:
-
-    pop  AR2
-    pop  AR1
-    pop  AR0
+Beep_Req_Done:
     pop  psw
     pop  acc
     ret
-;-------------------------------------------------------------------------------;
-; Time_Compare
+
+;---------------------------------------------------------
+; Buzzer_Task
+; - Call every loop
+; - Advances only when one_millisecond_flag is set
+;---------------------------------------------------------
+Buzzer_Task:
+    jbc  one_millisecond_flag_buzz, Buzzer_Step
+    ret
+
+Buzzer_Step:
+    mov  a, buzz_state
+
+; IDLE
+Buzzer_State0:
+    cjne a, #0, Buzzer_State1
+    clr  TR0
+    clr  SOUND_OUT
+    mov  buzz_priority, #0
+    ret
+
+; ON phase
+Buzzer_State1:
+    cjne a, #1, Buzzer_State2
+    inc  buzz_timer
+    mov  a, buzz_timer
+    cjne a, #BEEP_ON_MS, Buzzer_Done
+
+    ; ON time elapsed -> go OFF
+    mov  buzz_timer, #0
+    mov  buzz_state, #2
+    clr  TR0
+    clr  SOUND_OUT
+    ret
+
+; OFF phase
+Buzzer_State2:
+    inc  buzz_timer
+    mov  a, buzz_timer
+    cjne a, #BEEP_OFF_MS, Buzzer_Done
+
+    ; OFF time elapsed -> one beep finished
+    mov  buzz_timer, #0
+
+    mov  a, buzz_beeps_left
+    jz   Buzzer_GoIdle
+    dec  buzz_beeps_left
+    mov  a, buzz_beeps_left
+    jz   Buzzer_GoIdle
+
+    ; start next beep
+    mov  buzz_state, #1
+    setb TR0
+    ret
+
+Buzzer_GoIdle:
+    mov  buzz_state, #0
+    clr  TR0
+    clr  SOUND_OUT
+    mov  buzz_priority, #0
+    ret
+
+Buzzer_Done:
+    ret
+;---------------------------------------------------------
+
+;-------------------------------------------------------------------------------
+; Time_Compare_MMSS
 ;
 ; PURPOSE:
-;   Compare the elapsed time against soak and reflow
-;   time limits.
+;   Compare elapsed time (current_time_minute:current_time_sec)
+;   against soak and reflow setpoints (soak_time_*, reflow_time_*).
 ;
 ; BEHAVIOR:
-;   - If current_time >= soak_time   if soak_time_reached   = 1
-;   - If current_time >= reflow_time if reflow_time_reached = 1
+;   If current >= soak   -> set soak_time_reached
+;   If current >= reflow -> set reflow_time_reached
 ;
 ; NOTES:
-;   - Time values are treated as 32-bit UNSIGNED numbers
-;     (e.g., milliseconds or seconds).
-;   - Uses the SAME compare logic as Temp_Compare.
-;   - This routine ONLY SETS flags.
-;
-; EXPECTED VARIABLES:
-;   current_time[4], soak_time[4], reflow_time[4]
-;   x[4], y[4]
-;   mf, soak_time_reached, reflow_time_reached
-;-------------------------------------------------------------------------------;
-Time_Compare:
+;   Compare minutes first, then seconds.
+;-------------------------------------------------------------------------------
+Time_Compare_MMSS:
     push acc
     push psw
-    push AR0
-    push AR1
-    push AR2
 
-;-------------------------------------------------------------------------------;
-    ; Check: current_time >= soak_time ?
-;-------------------------------------------------------------------------------;
+;-----------------------------
+; current >= soak ?
+;-----------------------------
+    mov  a, current_time_minute
+    clr  c
+    subb a, soak_time_minute
+    jc   TC_Soak_NotReached      ; current_min < soak_min
+    jnz  TC_Soak_Reached         ; current_min > soak_min
 
-    ; Copy current_time of x
-    mov  R0, #current_time
-    mov  R1, #x
-    lcall Copy4_Bytes_R0_to_R1
+    ; minutes equal -> compare seconds
+    mov  a, current_time_sec
+    clr  c
+    subb a, soak_time_sec
+    jc   TC_Soak_NotReached      ; current_sec < soak_sec
 
-    ; Copy soak_time of y
-    mov  R0, #soak_time
-    mov  R1, #y
-    lcall Copy4_Bytes_R0_to_R1
-
-    ; Compare elapsed time vs soak time
-    lcall x_lt_y
-    jb   mf, Time_Soak_NotReached
+TC_Soak_Reached:
     setb soak_time_reached
 
-Time_Soak_NotReached:
+TC_Soak_NotReached:
 
-;-------------------------------------------------------------------------------;
-    ; Check: current_time >= reflow_time ?
-;-------------------------------------------------------------------------------;
+;-----------------------------
+; current >= reflow ?
+;-----------------------------
+    mov  a, current_time_minute
+    clr  c
+    subb a, reflow_time_minute
+    jc   TC_Reflow_NotReached
+    jnz  TC_Reflow_Reached
 
-    ; Copy current_time of x
-    mov  R0, #current_time
-    mov  R1, #x
-    lcall Copy4_Bytes_R0_to_R1
+    mov  a, current_time_sec
+    clr  c
+    subb a, reflow_time_sec
+    jc   TC_Reflow_NotReached
 
-    ; Copy reflow_time of y
-    mov  R0, #reflow_time
-    mov  R1, #y
-    lcall Copy4_Bytes_R0_to_R1
-
-    ; Compare elapsed time vs reflow time
-    lcall x_lt_y
-    jb   mf, Time_Reflow_NotReached
+TC_Reflow_Reached:
     setb reflow_time_reached
 
-Time_Reflow_NotReached:
-
-    pop  AR2
-    pop  AR1
-    pop  AR0
+TC_Reflow_NotReached:
     pop  psw
     pop  acc
     ret
@@ -738,14 +787,16 @@ Safety_Check_TC:
     jb   tc_missing_abort, Safety_TC_Done
     jnb  tc_startup_window, Safety_TC_Done
 
-    ; Check: current_time >= 60 ?
-    mov  R0, #current_time
-    mov  R1, #x
-    lcall Copy4_Bytes_R0_to_R1
+    ; Check: elapsed >= 60 seconds ?
+    mov  a, current_time_minute
+    jnz  Safety_TC_At60          ; if minute >= 1, definitely >=60s
 
-    Load_Y(60)
-    lcall x_lt_y
-    jb   mf, Safety_TC_Done        ; still < 60s → keep waiting
+    mov  a, current_time_sec
+    clr  c
+    subb a, #60
+    jc   Safety_TC_Done          ; still < 60s
+
+Safety_TC_At60:
 
     ; We reached 60s: close the startup window so it won't re-check later
     clr  tc_startup_window
@@ -873,6 +924,11 @@ main:
 	; time counters initialization
 	mov current_time_sec, #0
 	mov current_time_minute, #0
+	mov soak_time_sec, #0
+    mov soak_time_minute, #0
+    mov reflow_time_sec, #0
+    mov reflow_time_minute, #0
+
 	; Initialize counter to zero
     mov pwm_counter, #0
 	mov pwm_counter+1, #0
@@ -883,6 +939,11 @@ main:
 	mov power_output+2, #0
 	mov power_output+1, #02H
 	mov power_output, #0EEH ; (initilize to 750 for testing)
+	; Initialize Buzzer
+    mov buzz_state, #0
+    mov buzz_timer, #0
+    mov buzz_beeps_left, #0
+    mov buzz_priority, #0
 
 	; Clear all the flags
 	clr  tc_missing_abort
@@ -897,6 +958,8 @@ main:
 	clr reflow_temp_reached
 	clr reflow_time_reached
 	clr cooling_temp_reached
+    clr TR0
+    clr SOUND_OUT
 
 	; Set bit
 	setb tc_startup_window
@@ -915,6 +978,13 @@ loop:
 	; Check the FSM for one second counter
 	lcall SEC_FSM
 
+	; Check the time compare
+    lcall Time_Compare_MMSS
+    lcall Safety_Check_TC
+
+	; Check the temp compare
+    lcall Temp_Compare
+
 	; Check the FSM for the overall control flow of the reflow process
 	lcall Control_FSM
 
@@ -923,6 +993,9 @@ loop:
 
 	; Update the pwm output for the ssr
 	lcall PWM_Wave 
+
+    ; Run buzzer background task
+    lcall Buzzer_Task
 
 	; After initialization the program stays in this 'forever' loop
 	ljmp loop
