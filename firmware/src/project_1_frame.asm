@@ -26,7 +26,6 @@ org 0x002B
 ; includes
 $NOLIST
 $include(..\inc\MODMAX10)
-$include(..\inc\LCD_4bit_DE10Lite_no_RW.inc) ; LCD related functions and utility macros
 $include(..\inc\math32.asm) ; 
 $LIST
 ; ----------------------------------------------------------------------------------------------;
@@ -76,7 +75,7 @@ Buf_Refl_Time: ds 5
 bseg
 mf:		dbit 1 ; math32 sign
 one_second_flag: dbit 1
-one_millisecond_flag: dbit 1 ; one_millisecond_flag for pwm signal
+one_ms_pwm_flag: dbit 1 ; one_millisecond_flag for pwm signal
 
 soak_temp_reached: dbit 1
 reflow_temp_reached: dbit 1
@@ -89,6 +88,8 @@ reset_signal: dbit 1
 stop_signal: dbit 1
 start_signal: dbit 1
 config_finish_signal: dbit 1
+
+state_change_signal: dbit 1
 
 Key1_flag: dbit 1
 
@@ -260,38 +261,12 @@ Send32:
     mov A, #0AH
     lcall putchar
     ret
+; -----------------------------------------------------------------------------------------------;
 
-;-------------------------------------------------------------------------------
-; Routine to initialize the ISR for timer 2 
-Timer2_Init:
-	mov T2CON, #0 ; Stop timer/counter.  Autoreload mode.
-	mov TH2, #high(TIMER2_RELOAD)
-	mov TL2, #low(TIMER2_RELOAD)
-	; Set the reload value
-	mov RCAP2H, #high(TIMER2_RELOAD)
-	mov RCAP2L, #low(TIMER2_RELOAD)
-	; Enable the timer and interrupts
-    setb ET2  ; Enable timer 2 interrupt
-    setb TR2  ; Enable timer 2
-	ret
-
-; ISR for timer 2.  Runs every 1 ms ;
-Timer2_ISR:
-	push acc
-	push psw
-	clr TF2  ; Timer 2 doesn't clear TF2 automatically. Do it in ISR
-	; cpl P1.1 ; Optional debug pin toggle for scope (ensure it's not used elsewhere)
-
-; FSM states timers
-	inc KEY1_DEB_timer
-	inc SEC_FSM_timer
-
-	setb one_millisecond_flag ; set the one millisecond flag
-
-Timer2_ISR_done:
-	pop psw
-	pop acc
-	reti
+;-----------------------------------------------------------------------------------------------;
+$include(..\inc\Timer2_ISR.inc) ; Timer 2 ISR for 1ms tick and pwm signal generation
+$include(..\inc\LCD_4bit_DE10Lite_no_RW.inc) ; LCD related functions and utility macros
+;-----------------------------------------------------------------------------------------------;
 
 ;-------------------------------------------------------------------------------
 ; Display Function for 7-segment displays		
@@ -362,6 +337,14 @@ Hex_to_bcd_8bit:
 ;-------------------------------------------------------------------------------
 LCD_Display_Update_func:
 	push acc
+	
+    ; --- FIX: JUMP DISTANCE ERROR ---
+    ; "LCD_Display_Update_Done" is too far away for a JNB instruction.
+    ; We use a local label right here to exit quickly.
+	jnb state_change_signal, LCD_Local_Exit
+    ; --------------------------------
+
+	clr state_change_signal
 	mov a, Control_FSM_state
 
 	; --- IMPORTANT ADD ----
@@ -369,6 +352,12 @@ LCD_Display_Update_func:
     cjne a, #1, LCD_Display_Update_0
     pop acc
     ret 
+
+; --- NEW LOCAL EXIT LABEL ---
+LCD_Local_Exit:
+    pop acc
+    ret
+; ----------------------------
 
 LCD_Display_Update_0:
 	cjne a, #0, LCD_Display_Update_1
@@ -423,6 +412,9 @@ LCD_Display_Update_7:
 LCD_Display_Update_done:
 	pop acc
 	ret
+
+LCD_Display_Update_Temp:
+	
 ;---------------------------------------------------------
 
 KEY1_DEB:
@@ -508,11 +500,10 @@ SEC_FSM_done:
 ; clarity for the pwm signal; input parameter: power_output; used buffers: x, y
 ; ------------------------------------------------------------------------------
 PWM_Wave: ; call pwm generator when 1 ms flag is triggered
-	jbc one_millisecond_flag, pwm_wave_generator
+	jbc one_ms_pwm_flag, pwm_wave_generator
 	sjmp end_pwm_generator
 
 pwm_wave_generator:
-	clr one_millisecond_flag
 	clr mf
 	; move pwm counter value into x for comparison purpose
 	mov x, pwm_counter
@@ -598,9 +589,8 @@ Temp_Compare:
     push AR0
     push AR1
     push AR2
-;-------------------------------------------------------------------------------;
-    ; Check: current_temp >= soak_temp ?
-;-------------------------------------------------------------------------------;
+    
+; Check: current_temp >= soak_temp ?
     ; Copy current_temp of x (math32 operand A)
     mov  R0, #current_temp
     mov  R1, #x
@@ -618,11 +608,8 @@ Temp_Compare:
     jb   mf, Temp_Soak_NotReached
     setb soak_temp_reached
 
-;-------------------------------------------------------------------------------;
+; Check: current_temp >= reflow_temp ?
 Temp_Soak_NotReached:
-;-------------------------------------------------------------------------------;
-    ; Check: current_temp >= reflow_temp ?
-;-------------------------------------------------------------------------------;
     ; Copy current_temp of x
     mov  R0, #current_temp
     mov  R1, #x
@@ -638,9 +625,7 @@ Temp_Soak_NotReached:
     jb   mf, Temp_Reflow_NotReached
     setb reflow_temp_reached
 
-;-------------------------------------------------------------------------------;
 Temp_Reflow_NotReached:
-
     pop  AR2
     pop  AR1
     pop  AR0
@@ -676,10 +661,7 @@ Time_Compare:
     push AR1
     push AR2
 
-;-------------------------------------------------------------------------------;
-    ; Check: current_time >= soak_time ?
-;-------------------------------------------------------------------------------;
-
+; Check: current_time >= soak_time ?
     ; Copy current_time of x
     mov  R0, #current_time
     mov  R1, #x
@@ -695,12 +677,8 @@ Time_Compare:
     jb   mf, Time_Soak_NotReached
     setb soak_time_reached
 
+; Check: current_time >= reflow_time ?
 Time_Soak_NotReached:
-
-;-------------------------------------------------------------------------------;
-    ; Check: current_time >= reflow_time ?
-;-------------------------------------------------------------------------------;
-
     ; Copy current_time of x
     mov  R0, #current_time
     mov  R1, #x
@@ -717,7 +695,6 @@ Time_Soak_NotReached:
     setb reflow_time_reached
 
 Time_Reflow_NotReached:
-
     pop  AR2
     pop  AR1
     pop  AR0
@@ -753,6 +730,7 @@ Copy4_Loop:
     inc  R1
     djnz R2, Copy4_Loop
     ret
+
 ;-------------------------------------------------------------------------------;
 ; Abort condition safety check Temperature time
 ;
@@ -771,7 +749,6 @@ Copy4_Loop:
 ;
 ;   the Load_Y constants accordingly.
 ;-------------------------------------------------------------------------------;
-
 Safety_Check_TC:
     push acc
     push psw
@@ -816,6 +793,7 @@ Safety_TC_Done:
     pop  psw
     pop  acc
     ret
+
 ;-------------------------------------------------------------------------------;
 ; Main Control FSM for the entire process
 ;-------------------------------------------------------------------------------;
@@ -825,6 +803,7 @@ Control_FSM:
 
 Control_FSM_state0_a:
 	mov Control_FSM_state, #0
+	setb state_change_signal
 Control_FSM_state0:
 	cjne a, #0, Control_FSM_state1
 	jb P1.0, Control_FSM_done
@@ -833,6 +812,7 @@ Control_FSM_state0:
 
 Control_FSM_state1_a:
 	inc Control_FSM_state
+	setb state_change_signal
 Control_FSM_state1:
 	cjne a, #1, Control_FSM_state2
 	; --- ENABLE USER INPUT ---
@@ -847,6 +827,7 @@ Control_FSM_state1_b:
 
 Control_FSM_state2_a:
 	inc Control_FSM_state
+	setb state_change_signal
 Control_FSM_state2:
 	cjne a, #2, Control_FSM_state3
 	jbc PB2_flag, Control_FSM_state6_a
@@ -855,6 +836,7 @@ Control_FSM_state2:
 
 Control_FSM_state3_a:
 	inc Control_FSM_state
+	setb state_change_signal
 Control_FSM_state3:
 	cjne a, #3, Control_FSM_state4
 	jbc PB2_flag, Control_FSM_state6_a
@@ -863,6 +845,7 @@ Control_FSM_state3:
 
 Control_FSM_state4_a:
 	inc Control_FSM_state	
+	setb state_change_signal
 Control_FSM_state4:
 	cjne a, #4, Control_FSM_state5
 	jbc PB2_flag, Control_FSM_state6_a
@@ -871,6 +854,7 @@ Control_FSM_state4:
 
 Control_FSM_state5_a:
 	inc Control_FSM_state
+	setb state_change_signal
 Control_FSM_state5:
 	cjne a, #5, Control_FSM_state6
 	jbc PB2_flag, Control_FSM_state6_a
@@ -879,6 +863,7 @@ Control_FSM_state5:
 
 Control_FSM_state6_a:
 	inc Control_FSM_state
+	setb state_change_signal
 Control_FSM_state6:
 	cjne a, #6, Control_FSM_done
 	jbc cooling_temp_reached, Control_FSM_state7_a
@@ -886,6 +871,7 @@ Control_FSM_state6:
 
 Control_FSM_state7_a:
 	inc Control_FSM_state
+	setb state_change_signal
 Control_FSM_state7:
 	cjne a, #7, Control_FSM_done
 	jbc PB0_flag, Control_FSM_state0_a
@@ -961,6 +947,7 @@ main:
 	clr reflow_temp_reached
 	clr reflow_time_reached
 	clr cooling_temp_reached
+	clr state_change_signal
 
 	; Set bit
 	setb tc_startup_window
