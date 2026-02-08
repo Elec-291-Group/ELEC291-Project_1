@@ -1,6 +1,7 @@
 ; Project 1
 ; CV-8052 microcontroller in DE10-Lite board
-;-------------------------------------------------------------------------------
+
+; ----------------------------------------------------------------------------------------------;
 ; Reset vector
 org 0x0000
     ljmp main
@@ -22,7 +23,9 @@ org 0x0023
 ; Timer/Counter 2 overflow interrupt vector
 org 0x002B
 	ljmp Timer2_ISR
-;-------------------------------------------------------------------------------
+; ----------------------------------------------------------------------------------------------;
+
+; ----------------------------------------------------------------------------------------------;
 ; includes
 $NOLIST
 $include(..\inc\MODMAX10)
@@ -30,10 +33,13 @@ $include(..\inc\LCD_4bit_DE10Lite_no_RW.inc) ; LCD related functions and utility
 $include(..\inc\math32.asm) ; 
 $LIST
 ; ----------------------------------------------------------------------------------------------;
+
+; ----------------------------------------------------------------------------------------------;
 ; Data Segment 0x30 -- 0x7F  (overall 79d bytes available)
 dseg at 0x30
 current_time_sec:     ds 1
 current_time_minute:  ds 1
+
 ; math32 buffer variables
 x:		ds	4
 y:		ds	4
@@ -61,8 +67,9 @@ Control_FSM_state: ds 1
 proportional_gain_var: ds 4
 
 ; 46d bytes used
+; ---------------------------------------------------------------------------------------------;
 
-;-------------------------------------------------------------------------------
+; ---------------------------------------------------------------------------------------------;
 ; bit operation setb, clr, jb, and jnb
 bseg
 mf:		dbit 1 ; math32 sign
@@ -82,24 +89,21 @@ start_signal: dbit 1
 config_finish_signal: dbit 1
 
 Key1_flag: dbit 1
-
-tc_missing_abort: dbit 1   ; 1 = abort because temp < 50C after 60s
-tc_startup_window: dbit 1   ; 1 = still within first 60 seconds of the run
 PB0_flag: dbit 1 ; start entire program
 PB1_flag: dbit 1 ; start soak
 PB2_flag: dbit 1 ; pause process
 
 soak_temp_greater: dbit 1 ; target soak_temp greater than current_temp
 ; 11 bits used
+; ---------------------------------------------------------------------------------------------;
 
-;-------------------------------------------------------------------------------
+; ---------------------------------------------------------------------------------------------;
 cseg
 CLK            EQU 33333333 ; Microcontroller system crystal frequency in Hz
 BAUD 		   EQU 57600
 
 TIMER0_RATE    EQU 4096     ; 2048Hz squarewave (peak amplitude of CEM-1203 speaker)
-TIMER0_RELOAD  EQU ((65536-(CLK/(12*TIMER0_RATE)))) ; The prescaler in the CV-8052 
-; is always 12 unlike the N76E003 where is selectable.
+TIMER0_RELOAD  EQU ((65536-(CLK/(12*TIMER0_RATE)))) ; The prescaler in the CV-8052 is always 12 unlike the N76E003 where is selectable.
 
 TIMER_1_RELOAD EQU (256-((2*CLK)/(12*32*BAUD)))
 
@@ -119,7 +123,8 @@ BASE_POWER     EQU (MAX_POWER/5) ; 20% base power for state 2, 4
 KP			   EQU 5 ; proportional gain
 
 ; These 'equ' must match the wiring between the DE10Lite board and the LCD!
-; P0 is in connector JPIO.
+; P0 is in connector JPIO.  Check "CV-8052 Soft Processor in the DE10Lite Board: Getting
+; Started Guide" for the details.
 ELCD_RS equ P3.7
 ELCD_RW equ P3.5
 ELCD_E  equ P3.3
@@ -150,12 +155,14 @@ String_state7:    db 'Process Done   ', 0
 
 String_Blank:    db '                ', 0
 
-;-------------------------------------------------------------------------------
+
+;----------------------------------------------------------------------------------------------;
 ; Timers Setting:
 ;   Timer 0: 2kHz square wave generation at P1.5 (speaker)
 ; 	Timer 1: Serial port baud rate 57600 generator
 ;  	Timer 2: 1ms interrupt for BCD counter increment/decrement
-;-------------------------------------------------------------------------------
+;----------------------------------------------------------------------------------------------;
+
 ; Routine to initialize the ISR for Timer 0 ;
 Timer0_Init:
 	mov a, TMOD
@@ -176,6 +183,7 @@ Timer0_ISR:
 	mov TL0, #low(TIMER0_RELOAD)
 	cpl SOUND_OUT ; Connect speaker to P1.5
 	reti
+
 ; -----------------------------------------------------------------------------------------------;
 
 ; Routine to initialize the serial port at 57600 baud (Timer 1 in mode 2)
@@ -209,12 +217,12 @@ SendString:
 SendString_L1:
 	ret
 
-;-------------------------------------------------------------------------------
+; -----------------------------------------------------------------------------------------------;
+
 ; serial debugging
 ; send a four byte number via serial to laptop
 ; need to be used with python script
 ; content needed to be sent should be stored in the varaible x
-;-------------------------------------------------------------------------------
 Send32:
     ; data format: 0xAA, 0x55, x+3, x+2, x+1, x+0, 0xAH (big endian)
     mov A, #0AAH
@@ -235,7 +243,7 @@ Send32:
     lcall putchar
     ret
 
-;-------------------------------------------------------------------------------
+;------------------------------------------------------------------------------------------------;
 ; Routine to initialize the ISR for timer 2 
 Timer2_Init:
 	mov T2CON, #0 ; Stop timer/counter.  Autoreload mode.
@@ -266,10 +274,11 @@ Timer2_ISR_done:
 	pop psw
 	pop acc
 	reti
+;-----------------------------------------------------------------------------------------------;
 
-;-------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------;
 ; Display Function for 7-segment displays		
-;-------------------------------------------------------------------------------
+
 ; Look-up table for the 7-seg displays. (Segments are turn on with zero) 
 T_7seg:
     DB 0xC0, 0xF9, 0xA4, 0xB0, 0x99        ; 0 TO 4
@@ -279,41 +288,50 @@ T_7seg:
 ; Displays a BCD number pased in R0 in HEX5-HEX0
 Display_BCD_7_Seg_HEX10:
 	mov dptr, #T_7seg
+
 	mov a, R0
 	swap a
 	anl a, #0FH
 	movc a, @a+dptr
 	mov HEX1, a
+	
 	mov a, R0
 	anl a, #0FH
 	movc a, @a+dptr
 	mov HEX0, a
+	
 	ret
 
 Display_BCD_7_Seg_HEX32:
 	mov dptr, #T_7seg
+
 	mov a, R0
 	swap a
 	anl a, #0FH
 	movc a, @a+dptr
 	mov HEX3, a
+	
 	mov a, R0
 	anl a, #0FH
 	movc a, @a+dptr
 	mov HEX2, a
+	
 	ret
 
 Display_BCD_7_Seg_HEX54:
 	mov dptr, #T_7seg
+
 	mov a, R0
 	swap a
 	anl a, #0FH
 	movc a, @a+dptr
 	mov HEX5, a
+	
 	mov a, R0
 	anl a, #0FH
 	movc a, @a+dptr
 	mov HEX4, a
+	
 	ret
 
 ; The 8-bit hex number passed in the accumulator is converted to
@@ -331,9 +349,8 @@ Hex_to_bcd_8bit:
 	mov R0, a
 	ret
 
-;-------------------------------------------------------------------------------
+;------------------------------------------------------------------;
 ; Display Function for LCD 						
-;-------------------------------------------------------------------------------
 LCD_Display_Update_func:
 	push acc
 	mov a, Control_FSM_state
@@ -391,10 +408,10 @@ LCD_Display_Update_7:
 LCD_Display_Update_done:
 	pop acc
 	ret
-;---------------------------------------------------------
 
+;-------------------------------------------------------------------------------
+; non-blocking state machine for KEY1 debounce
 KEY1_DEB:
-;non-blocking state machine for KEY1 debounce
 	mov a, KEY1_DEB_state
 KEY1_DEB_state0:
 	cjne a, #0, KEY1_DEB_state1
@@ -424,10 +441,10 @@ KEY1_DEB_state3:
 	mov KEY1_DEB_state, #0	
 KEY1_DEB_done:
 	ret
-
 ; ------------------------------------------------------------------------------
-; Non-blocking FSM for the one second counter
+
 ;-------------------------------------------------------------------------------
+; non-blocking FSM for the one second counter
 SEC_FSM:
 	mov a, SEC_FSM_state
 SEC_FSM_state0:
@@ -662,7 +679,7 @@ state4_power_control:
 state5_power_control:
 	; reflow 20% base power
 	cjne a, #5, state6_power_control
-	mov power_output, #low(BASE_POWER)
+	mov power_output, #low(BASE_POWER)  
 	mov power_output+1, #high(BASE_POWER)
 	mov power_output+2, #0
 	mov power_output+3, #0
@@ -693,7 +710,6 @@ power_control_done:
 ; PWM
 ; generate pwm signal for the ssr ; 1.5s period for the pwm signal; with 1 watt 
 ; clarity for the pwm signal; input parameter: power_output; used buffers: x, y
-; ------------------------------------------------------------------------------
 PWM_Wave: ; call pwm generator when 1 ms flag is triggered
 	jbc one_millisecond_flag, pwm_wave_generator
 	sjmp end_pwm_generator
@@ -708,8 +724,7 @@ pwm_wave_generator:
 
 	Load_Y(PWM_PERIOD)
 
-	; compare x(pwm_counter) and y(1499) if x=y, wrap x back to 0; else 
-	; increase x by 1
+	; compare x(pwm_counter) and y(1499) if x=y, wrap x back to 0; else increase x by 1
 	lcall x_eq_y 
 	jb mf, wrap_pwm_counter
 	; x not equal 1499, increment by 1
@@ -731,8 +746,8 @@ wrap_pwm_counter:
 	mov pwm_counter+3, x+3
 
 set_pwm:
-	; compare with power_output, if pwm counter smaller than power_output, 
-	; set pwm pin high; else set pwm pin low load y with power output value
+	; compare with power_output, if pwm counter smaller than power_output, set pwm pin high; else set pwm pin low
+	; load y with power output value
 	mov y, power_output
 	mov y+1, power_output+1
 	mov y+2, power_output+2
@@ -740,8 +755,8 @@ set_pwm:
 
 	; compare x(pwm counter) with y(power output)
 	lcall x_lt_y
-	jb mf, set_pwm_high ; set pwm pin high if pwm counter smaller than power 
-	;output set pwm pin low if pwm counter greater than power output
+	jb mf, set_pwm_high ; set pwm pin high if pwm counter smaller than power output
+	; set pwm pin low if pwm counter greater than power output
 	clr PWM_OUT
 	clr LEDRA.4
 	sjmp end_pwm_generator
@@ -752,259 +767,10 @@ set_pwm_high:
 
 end_pwm_generator:
 	ret
-
-;-------------------------------------------------------------------------------;
-; Temp_Compare
-;
-; PURPOSE:
-;   Compare the current measured temperature against
-;   the soak and reflow temperature setpoints.
-;
-; BEHAVIOR:
-;   - If current_temp >= soak_temp   if soak_temp_reached   = 1
-;   - If current_temp >= reflow_temp if reflow_temp_reached = 1
-;
-; NOTES:
-;   - Uses 32-bit UNSIGNED comparison from math32.asm
-;   - Comparison is done by:
-;       x < y ?   (mf = 1)  if NOT reached
-;       x >= y ?  (mf = 0)  if reached
-;   - This routine ONLY SETS flags.
-;     Clearing flags must be handled by the FSM.
-;
-; EXPECTED VARIABLES (DSEG / BSEG):
-;   current_temp[4], soak_temp[4], reflow_temp[4]
-;   x[4], y[4]
-;   mf (math32 compare flag)
-;   soak_temp_reached, reflow_temp_reached
-;-------------------------------------------------------------------------------;
-Temp_Compare:
-    push acc
-    push psw
-    push AR0
-    push AR1
-    push AR2
-;-------------------------------------------------------------------------------;
-    ; Check: current_temp >= soak_temp ?
-;-------------------------------------------------------------------------------;
-    ; Copy current_temp of x (math32 operand A)
-    mov  R0, #current_temp
-    mov  R1, #x
-    lcall Copy4_Bytes_R0_to_R1
-
-    ; Copy soak_temp of y (math32 operand B)
-    mov  R0, #soak_temp
-    mov  R1, #y
-    lcall Copy4_Bytes_R0_to_R1
-
-    ; Perform x < y comparison
-    ; mf = 1 if current_temp < soak_temp  (NOT reached)
-    ; mf = 0 if current_temp >= soak_temp (REACHED)
-    lcall x_lt_y
-    jb   mf, Temp_Soak_NotReached
-    setb soak_temp_reached
-
-;-------------------------------------------------------------------------------;
-Temp_Soak_NotReached:
-;-------------------------------------------------------------------------------;
-    ; Check: current_temp >= reflow_temp ?
-;-------------------------------------------------------------------------------;
-    ; Copy current_temp of x
-    mov  R0, #current_temp
-    mov  R1, #x
-    lcall Copy4_Bytes_R0_to_R1
-
-    ; Copy reflow_temp of y
-    mov  R0, #reflow_temp
-    mov  R1, #y
-    lcall Copy4_Bytes_R0_to_R1
-
-    ; Compare x < y again
-    lcall x_lt_y
-    jb   mf, Temp_Reflow_NotReached
-    setb reflow_temp_reached
-
-;-------------------------------------------------------------------------------;
-Temp_Reflow_NotReached:
-
-    pop  AR2
-    pop  AR1
-    pop  AR0
-    pop  psw
-    pop  acc
-    ret
-;-------------------------------------------------------------------------------;
-; Time_Compare
-;
-; PURPOSE:
-;   Compare the elapsed time against soak and reflow
-;   time limits.
-;
-; BEHAVIOR:
-;   - If current_time >= soak_time   if soak_time_reached   = 1
-;   - If current_time >= reflow_time if reflow_time_reached = 1
-;
-; NOTES:
-;   - Time values are treated as 32-bit UNSIGNED numbers
-;     (e.g., milliseconds or seconds).
-;   - Uses the SAME compare logic as Temp_Compare.
-;   - This routine ONLY SETS flags.
-;
-; EXPECTED VARIABLES:
-;   current_time[4], soak_time[4], reflow_time[4]
-;   x[4], y[4]
-;   mf, soak_time_reached, reflow_time_reached
-;-------------------------------------------------------------------------------;
-Time_Compare:
-    push acc
-    push psw
-    push AR0
-    push AR1
-    push AR2
-
-;-------------------------------------------------------------------------------;
-    ; Check: current_time >= soak_time ?
 ;-------------------------------------------------------------------------------;
 
-    ; Copy current_time of x
-    mov  R0, #current_time
-    mov  R1, #x
-    lcall Copy4_Bytes_R0_to_R1
-
-    ; Copy soak_time of y
-    mov  R0, #soak_time
-    mov  R1, #y
-    lcall Copy4_Bytes_R0_to_R1
-
-    ; Compare elapsed time vs soak time
-    lcall x_lt_y
-    jb   mf, Time_Soak_NotReached
-    setb soak_time_reached
-
-Time_Soak_NotReached:
-
 ;-------------------------------------------------------------------------------;
-    ; Check: current_time >= reflow_time ?
-;-------------------------------------------------------------------------------;
-
-    ; Copy current_time of x
-    mov  R0, #current_time
-    mov  R1, #x
-    lcall Copy4_Bytes_R0_to_R1
-
-    ; Copy reflow_time of y
-    mov  R0, #reflow_time
-    mov  R1, #y
-    lcall Copy4_Bytes_R0_to_R1
-
-    ; Compare elapsed time vs reflow time
-    lcall x_lt_y
-    jb   mf, Time_Reflow_NotReached
-    setb reflow_time_reached
-
-Time_Reflow_NotReached:
-
-    pop  AR2
-    pop  AR1
-    pop  AR0
-    pop  psw
-    pop  acc
-    ret
-
-;-------------------------------------------------------------------------------;
-; Copy4_Bytes_R0_to_R1
-;
-; PURPOSE:
-;   Utility routine to copy a 32-bit value (4 bytes)
-;   from one memory location to another.
-;
-; INPUTS:
-;   R0 st source address
-;   R1 at destination address
-;
-; USES:
-;   R2 as loop counter
-;
-; EXAMPLE:
-;   mov R0, #current_temp
-;   mov R1, #x
-;   lcall Copy4_Bytes_R0_to_R1
-;-------------------------------------------------------------------------------;
-Copy4_Bytes_R0_to_R1:
-    mov  R2, #4
-Copy4_Loop:
-    mov  a, @R0
-    mov  @R1, a
-    inc  R0
-    inc  R1
-    djnz R2, Copy4_Loop
-    ret
-;-------------------------------------------------------------------------------;
-; Abort condition safety check Temperature time
-;
-; PURPOSE:
-;   Automatic cycle termination on error:
-;   Abort if oven fails to reach at least 50C in first 60s.
-;
-; TRIP CONDITION:
-;   if (current_time >= 60s) AND (current_temp < 50C)
-;       -> set tc_missing_abort
-;       -> set stop_signal
-;
-; ASSUMPTIONS:
-;   - current_time is in SECONDS (32-bit, little-endian)
-;   - current_temp is in DEGREES C (integer, 32-bit, little-endian)
-;
-;   the Load_Y constants accordingly.
-;-------------------------------------------------------------------------------;
-
-Safety_Check_TC:
-    push acc
-    push psw
-    push AR0
-    push AR1
-    push AR2
-
-    ; If already aborted or startup window closed, do nothing
-    jb   tc_missing_abort, Safety_TC_Done
-    jnb  tc_startup_window, Safety_TC_Done
-
-    ; Check: current_time >= 60 ?
-    mov  R0, #current_time
-    mov  R1, #x
-    lcall Copy4_Bytes_R0_to_R1
-
-    Load_Y(60)
-    lcall x_lt_y
-    jb   mf, Safety_TC_Done        ; still < 60s → keep waiting
-
-    ; We reached 60s: close the startup window so it won't re-check later
-    clr  tc_startup_window
-
-    ; Now check: current_temp < 50 ?
-    mov  R0, #current_temp
-    mov  R1, #x
-    lcall Copy4_Bytes_R0_to_R1
-
-    Load_Y(50)
-    lcall x_lt_y
-    jnb  mf, Safety_TC_Done        ; temp >= 50 → pass
-
-    ; FAIL: at 60s, still below 50C → abort
-    setb tc_missing_abort
-    setb stop_signal
-    clr  PWM_OUT
-
-Safety_TC_Done:
-    pop  AR2
-    pop  AR1
-    pop  AR0
-    pop  psw
-    pop  acc
-    ret
-;-------------------------------------------------------------------------------;
-; Main Control FSM for the entire process
-;-------------------------------------------------------------------------------;
+; main control fsm for the entire process
 Control_FSM:
 	mov a, Control_FSM_state
 	sjmp Control_FSM_state0
@@ -1075,9 +841,13 @@ Control_FSM_state7:
 Control_FSM_done:
 	ret
 ;-------------------------------------------------------------------------------;
-;         Main program.          
-;-------------------------------------------------------------------------------;
+
+
+;---------------------------------;
+;         Main program.           ;
+;---------------------------------;
 main:
+	; -------------------------------------------------------------------;
 	; Initialization
     mov SP, #0x7F
 
@@ -1116,8 +886,6 @@ main:
 	mov power_output, #0EEH ; (initilize to 750 for testing)
 
 	; Clear all the flags
-	clr  tc_missing_abort
-	clr  stop_signal
 	clr PB0_flag
 	clr PB1_flag
 	clr PB2_flag
@@ -1129,16 +897,11 @@ main:
 	clr reflow_time_reached
 	clr cooling_temp_reached
 
-	; Set bit
-	setb tc_startup_window
-
 	lcall Timer0_Init
     lcall Timer2_Init
 	lcall ELCD_4BIT
 	lcall Initialize_Serial_Port
-;-------------------------------------------------------------------------------;
-; while(1) loop
-;-------------------------------------------------------------------------------;
+
 loop:
 	; Check the FSM for KEY1 debounce
 	lcall KEY1_DEB
@@ -1157,6 +920,5 @@ loop:
 
 	; After initialization the program stays in this 'forever' loop
 	ljmp loop
-;-------------------------------------------------------------------------------;
 
 END

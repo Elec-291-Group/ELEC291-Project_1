@@ -4,7 +4,7 @@
 0000              4   ; ----------------------------------------------------------------------------------------------;
 0000              5   ; Reset vector
 0000              6   org 0x0000
-0000 0209CC       7       ljmp main
+0000 0209E2       7       ljmp main
 0003              8   ; External interrupt 0 vector
 0003              9   org 0x0003
 0003 32          10            reti
@@ -649,7 +649,7 @@
 075F 755800     506            mov power_output+1, #low(NO_POWER)
 0762 755900     507            mov power_output+2, #0
 0765 755A00     508            mov power_output+3, #0
-0768 0208ED     509            ljmp power_control_done
+0768 020903     509            ljmp power_control_done
 076B            510   
 076B            511   state1_power_control:
 076B            512            ; idle
@@ -659,7 +659,7 @@
 0771 755800     516            mov power_output+1, #low(NO_POWER)
 0774 755900     517            mov power_output+2, #0
 0777 755A00     518            mov power_output+3, #0
-077A 0208ED     519            ljmp power_control_done
+077A 020903     519            ljmp power_control_done
 077D            520            
 077D            521   state2_power_control:
 077D            522            ; ramp to soak, ramp to ~150C
@@ -669,18 +669,18 @@
 0783 755805     526            mov power_output+1, #high(MAX_POWER)
 0786 755900     527            mov power_output+2, #0
 0789 755A00     528            mov power_output+3, #0
-078C 0208ED     529            ljmp power_control_done
+078C 020903     529            ljmp power_control_done
 078F            530   
 078F            531   state3_power_control:
 078F            532            ; soak period, hold at 150C
 078F            533            ; 20% base power + proportional calculated power
 078F B40302     534            cjne a, #3, jump_state4_power_control
-0792 8003       535            sjmp state_power_control_calculation
+0792 8003       535            sjmp state3_power_control_calculation
 0794            536   
 0794            537   jump_state4_power_control:
-0794 0208AB     538            ljmp state4_power_control
+0794 0208C1     538            ljmp state4_power_control
 0797            539   
-0797            540   state_power_control_calculation:
+0797            540   state3_power_control_calculation:
 0797            541            ; move soak_temp to x
 0797 854332     542            mov x, soak_temp
 079A 854433     543            mov x+1, soak_temp+1
@@ -759,7 +759,7 @@
 083B 853369     610            mov proportional_gain_var+1, x+1
 083E 85346A     611            mov proportional_gain_var+2, x+2
 0841 85356B     612            mov proportional_gain_var+3, x+3
-0844 8027       613            sjmp saturator_soak
+0844 803D       613            sjmp saturator_soak
 0846            614   
 0846            615   sub_proportional_soak:
 0846            616            ; base_power - soak_power when soak_temp <= current_temp
@@ -771,304 +771,318 @@
 0855 856937     619            mov y+1, proportional_gain_var+1
 0858 856A38     620            mov y+2, proportional_gain_var+2
 085B 856B39     621            mov y+3, proportional_gain_var+3
-085E 1201AD     622            lcall sub32
-0861            623            ; x now holds the power output before the saturator
-0861 853268     624            mov proportional_gain_var, x
-0864 853369     625            mov proportional_gain_var+1, x+1
-0867 85346A     626            mov proportional_gain_var+2, x+2
-086A 85356B     627            mov proportional_gain_var+3, x+3
-086D            628   
-086D            629   saturator_soak:
-086D            630            ; proportional_gain_var now holds the power output before the saturator
-086D            631            ; saturate power output to max power
-086D 856832     632            mov x, proportional_gain_var
-0870 856933     633            mov x+1, proportional_gain_var+1
-0873 856A34     634            mov x+2, proportional_gain_var+2
-0876 856B35     635            mov x+3, proportional_gain_var+3
-0879            636   
-0879 7536DC     637            mov y+0, #low (MAX_POWER % 0x10000) 
-087C 753705     637            mov y+1, #high(MAX_POWER % 0x10000) 
-087F 753800     637            mov y+2, #low (MAX_POWER / 0x10000) 
-0882 753900     637            mov y+3, #high(MAX_POWER / 0x10000) 
-0885            638   
-0885 C200       639            clr mf
-0887 1201ED     640            lcall x_gt_y ; set mf to 1 if calculated power output greater than max power
-088A 20000F     641            jb mf, saturated_soak
-088D            642            ; set power_output to calculated power if not saturated
-088D 856857     643            mov power_output, proportional_gain_var
-0890 856958     644            mov power_output+1, proportional_gain_var+1
-0893 856A59     645            mov power_output+2, proportional_gain_var+2
-0896 856B5A     646            mov power_output+3, proportional_gain_var+3
-0899 0208ED     647            ljmp power_control_done
-089C            648   
-089C            649   saturated_soak:
-089C 7557DC     650            mov power_output, #low(MAX_POWER)
-089F 755805     651            mov power_output+1, #high(MAX_POWER)
-08A2 755900     652            mov power_output+2, #0
-08A5 755A00     653            mov power_output+3, #0
-08A8 0208ED     654            ljmp power_control_done
-08AB            655   
-08AB            656   state4_power_control:
-08AB            657            ; ramp to reflow, max power
-08AB B4040F     658            cjne a, #4, state5_power_control
-08AE 7557DC     659            mov power_output, #low(MAX_POWER)
-08B1 755805     660            mov power_output+1, #high(MAX_POWER)
-08B4 755900     661            mov power_output+2, #0
-08B7 755A00     662            mov power_output+3, #0
-08BA 0208ED     663            ljmp power_control_done
-08BD            664   
-08BD            665   state5_power_control:
-08BD            666            ; reflow 20% base power
-08BD B4050F     667            cjne a, #5, state6_power_control
-08C0 75572C     668            mov power_output, #low(BASE_POWER)
-08C3 755801     669            mov power_output+1, #high(BASE_POWER)
-08C6 755900     670            mov power_output+2, #0
-08C9 755A00     671            mov power_output+3, #0
-08CC 0208ED     672            ljmp power_control_done
-08CF            673   
-08CF            674   state6_power_control:
-08CF            675            ; cooling 0% power
-08CF B4060F     676            cjne a, #6, state_7_power_control
-08D2 755700     677            mov power_output, #low(NO_POWER)
-08D5 755800     678            mov power_output+1, #high(NO_POWER)
-08D8 755900     679            mov power_output+2, #0
-08DB 755A00     680            mov power_output+3, #0
-08DE 0208ED     681            ljmp power_control_done
-08E1            682   
-08E1            683   state_7_power_control:
-08E1            684            ; idle 0% power
-08E1 755700     685            mov power_output, #low(NO_POWER)
-08E4 755800     686            mov power_output+1, #low(NO_POWER)
-08E7 755900     687            mov power_output+2, #0
-08EA 755A00     688            mov power_output+3, #0
-08ED            689   
-08ED            690   power_control_done:
-08ED 22         691            ret
-08EE            692   
-08EE            693   
-08EE            694   
-08EE            695   ;-------------------------------------------------------------------------------
-08EE            696   ; PWM
-08EE            697   ; generate pwm signal for the ssr ; 1.5s period for the pwm signal; with 1 watt 
-08EE            698   ; clarity for the pwm signal; input parameter: power_output; used buffers: x, y
-08EE            699   PWM_Wave: ; call pwm generator when 1 ms flag is triggered
-08EE 100202     700            jbc one_millisecond_flag, pwm_wave_generator
-08F1 8071       701            sjmp end_pwm_generator
-08F3            702   
-08F3            703   pwm_wave_generator:
-08F3 C200       704            clr mf
-08F5            705            ; move pwm counter value into x for comparison purpose
-08F5 855B32     706            mov x, pwm_counter
-08F8 855C33     707            mov x+1, pwm_counter+1
-08FB 855D34     708            mov x+2, pwm_counter+2
-08FE 855E35     709            mov x+3, pwm_counter+3
-0901            710   
-0901 7536DB     711            mov y+0, #low (PWM_PERIOD % 0x10000) 
-0904 753705     711            mov y+1, #high(PWM_PERIOD % 0x10000) 
-0907 753800     711            mov y+2, #low (PWM_PERIOD / 0x10000) 
-090A 753900     711            mov y+3, #high(PWM_PERIOD / 0x10000) 
-090D            712   
-090D            713            ; compare x(pwm_counter) and y(1499) if x=y, wrap x back to 0; else increase x by 1
-090D 120209     714            lcall x_eq_y 
-0910 20001D     715            jb mf, wrap_pwm_counter
-0913            716            ; x not equal 1499, increment by 1
-0913 753601     717            mov y+0, #low (1 % 0x10000) 
-0916 753700     717            mov y+1, #high(1 % 0x10000) 
-0919 753800     717            mov y+2, #low (1 / 0x10000) 
-091C 753900     717            mov y+3, #high(1 / 0x10000) 
-091F 12018A     718            lcall add32
-0922            719            ; update pwm_counter
-0922 85325B     720            mov pwm_counter, x
-0925 85335C     721            mov pwm_counter+1, x+1
-0928 85345D     722            mov pwm_counter+2, x+2
-092B 85355E     723            mov pwm_counter+3, x+3
-092E 8018       724            sjmp set_pwm
-0930            725   
-0930            726   wrap_pwm_counter:
-0930            727            ; x equal 1499, wrap to 0
-0930 753200     728            mov x+0, #low (0 % 0x10000) 
-0933 753300     728            mov x+1, #high(0 % 0x10000) 
-0936 753400     728            mov x+2, #low (0 / 0x10000) 
-0939 753500     728            mov x+3, #high(0 / 0x10000) 
-093C 85325B     729            mov pwm_counter, x
-093F 85335C     730            mov pwm_counter+1, x+1
-0942 85345D     731            mov pwm_counter+2, x+2
-0945 85355E     732            mov pwm_counter+3, x+3
-0948            733   
-0948            734   set_pwm:
-0948            735            ; compare with power_output, if pwm counter smaller than power_output, set pwm pin high; else set pwm pin low
-0948            736            ; load y with power output value
-0948 855736     737            mov y, power_output
-094B 855837     738            mov y+1, power_output+1
-094E 855938     739            mov y+2, power_output+2
-0951 855A39     740            mov y+3, power_output+3
-0954            741   
-0954            742            ; compare x(pwm counter) with y(power output)
-0954 1201D1     743            lcall x_lt_y
-0957 200006     744            jb mf, set_pwm_high ; set pwm pin high if pwm counter smaller than power output
-095A            745            ; set pwm pin low if pwm counter greater than power output
-095A C293       746            clr PWM_OUT
-095C C2EC       747            clr LEDRA.4
-095E 8004       748            sjmp end_pwm_generator
-0960            749   
-0960            750   set_pwm_high:
-0960 D293       751            setb PWM_OUT
-0962 D2EC       752            setb LEDRA.4
-0964            753   
-0964            754   end_pwm_generator:
-0964 22         755            ret
-0965            756   ;-------------------------------------------------------------------------------;
-0965            757   
-0965            758   ;-------------------------------------------------------------------------------;
-0965            759   ; main control fsm for the entire process
-0965            760   Control_FSM:
-0965 E567       761            mov a, Control_FSM_state
-0967 8003       762            sjmp Control_FSM_state0
-0969            763   
-0969            764   Control_FSM_state0_a:
-0969 756700     765            mov Control_FSM_state, #0
-096C            766   Control_FSM_state0:
-096C B40007     767            cjne a, #0, Control_FSM_state1
-096F 100D02     768            jbc PB0_flag, Control_FSM_state1_a
-0972 8057       769            sjmp Control_FSM_done
-0974            770   
-0974            771   Control_FSM_state1_a:
-0974 0567       772            inc Control_FSM_state
-0976            773   Control_FSM_state1:
-0976 B4010C     774            cjne a, #1, Control_FSM_state2
-0979 100E02     775            jbc PB1_flag, Control_FSM_state1_b
-097C 804D       776            sjmp Control_FSM_done
-097E            777   Control_FSM_state1_b:
-097E 100B02     778            jbc config_finish_signal, Control_FSM_state2_a
-0981 8048       779            sjmp Control_FSM_done
-0983            780   
-0983            781   Control_FSM_state2_a:
-0983 0567       782            inc Control_FSM_state
-0985            783   Control_FSM_state2:
-0985 B4020A     784            cjne a, #2, Control_FSM_state3
-0988 100F2C     785            jbc PB2_flag, Control_FSM_state6_a
-098B 100302     786            jbc soak_temp_reached, Control_FSM_state3_a
-098E 803B       787            sjmp Control_FSM_done
-0990            788   
-0990            789   Control_FSM_state3_a:
-0990 0567       790            inc Control_FSM_state
-0992            791   Control_FSM_state3:
-0992 B4030A     792            cjne a, #3, Control_FSM_state4
-0995 100F1F     793            jbc PB2_flag, Control_FSM_state6_a
-0998 100602     794            jbc soak_time_reached, Control_FSM_state4_a
-099B 802E       795            sjmp Control_FSM_done
-099D            796   
-099D            797   Control_FSM_state4_a:
-099D 0567       798            inc Control_FSM_state   
-099F            799   Control_FSM_state4:
-099F B4040A     800            cjne a, #4, Control_FSM_state5
-09A2 100F12     801            jbc PB2_flag, Control_FSM_state6_a
-09A5 100402     802            jbc reflow_temp_reached, Control_FSM_state5_a
-09A8 8021       803            sjmp Control_FSM_done
-09AA            804   
-09AA            805   Control_FSM_state5_a:
-09AA 0567       806            inc Control_FSM_state
-09AC            807   Control_FSM_state5:
-09AC B4050A     808            cjne a, #5, Control_FSM_state6
-09AF 100F05     809            jbc PB2_flag, Control_FSM_state6_a
-09B2 100702     810            jbc reflow_time_reached, Control_FSM_state6_a
-09B5 8014       811            sjmp Control_FSM_done
-09B7            812   
-09B7            813   Control_FSM_state6_a:
-09B7 0567       814            inc Control_FSM_state
-09B9            815   Control_FSM_state6:
-09B9 B4060F     816            cjne a, #6, Control_FSM_done
-09BC 100502     817            jbc cooling_temp_reached, Control_FSM_state7_a
-09BF 800A       818            sjmp Control_FSM_done
-09C1            819   
-09C1            820   Control_FSM_state7_a:
-09C1 0567       821            inc Control_FSM_state
-09C3            822   Control_FSM_state7:
-09C3 B40705     823            cjne a, #7, Control_FSM_done
-09C6 100DA0     824            jbc PB0_flag, Control_FSM_state0_a
-09C9 8000       825            sjmp Control_FSM_done
-09CB            826   
-09CB            827   Control_FSM_done:
-09CB 22         828            ret
-09CC            829   ;-------------------------------------------------------------------------------;
-09CC            830   
-09CC            831   
-09CC            832   ;---------------------------------;
-09CC            833   ;         Main program.           ;
-09CC            834   ;---------------------------------;
-09CC            835   main:
-09CC            836            ; -------------------------------------------------------------------;
-09CC            837            ; Initialization
-09CC 75817F     838       mov SP, #0x7F
-09CF            839   
-09CF            840            ; We use the pins of P0 to control the LCD.  Configure as outputs.
-09CF 759A7F     841       mov P0MOD, #01111111b ; P0.0 to P0.6 are outputs.  ('1' makes the pin output)
-09D2            842       ; We use pins P1.5 and P1.1 as outputs also.  Configure accordingly.
-09D2 759B22     843       mov P1MOD, #00100010b ; P1.5 and P1.1 are outputs
-09D5 759CFF     844       mov P2MOD, #0xff
-09D8 759DFF     845       mov P3MOD, #0xff
-09DB            846       ; Turn off all the LEDs
-09DB 75E800     847       mov LEDRA, #0 ; LEDRA is bit addressable
-09DE 759500     848       mov LEDRB, #0 ; LEDRB is NOT bit addresable
-09E1            849   
-09E1            850            ; Enable Global interrupts
-09E1 D2AF       851       setb EA  
-09E3            852   
-09E3            853            ; FSM initial states
-09E3 756500     854            mov KEY1_DEB_state, #0
-09E6 756600     855            mov SEC_FSM_state, #0
-09E9 756700     856            mov Control_FSM_state, #0
-09EC            857            ; FSM timers initialization
-09EC 756300     858            mov KEY1_DEB_timer, #0
-09EF 756400     859            mov SEC_FSM_timer, #0
-09F2            860            ; time counters initialization
-09F2 753000     861            mov current_time_sec, #0
-09F5 753100     862            mov current_time_minute, #0
-09F8            863            ; Initialize counter to zero
-09F8 755B00     864       mov pwm_counter, #0
-09FB 755C00     865            mov pwm_counter+1, #0
-09FE 755D00     866            mov pwm_counter+2, #0
-0A01 755E00     867            mov pwm_counter+3, #0
-0A04            868            ; Initialize power output
-0A04 755A00     869            mov power_output+3, #0
-0A07 755900     870            mov power_output+2, #0
-0A0A 755802     871            mov power_output+1, #02H
-0A0D 7557EE     872            mov power_output, #0EEH ; (initilize to 750 for testing)
-0A10            873   
-0A10            874            ; Clear all the flags
-0A10 C20D       875            clr PB0_flag
-0A12 C20E       876            clr PB1_flag
-0A14 C20F       877            clr PB2_flag
-0A16 C201       878            clr one_second_flag
-0A18 C20B       879            clr config_finish_signal
-0A1A C203       880            clr soak_temp_reached
-0A1C C206       881            clr soak_time_reached
-0A1E C204       882            clr reflow_temp_reached
-0A20 C207       883            clr reflow_time_reached
-0A22 C205       884            clr cooling_temp_reached
-0A24            885   
-0A24 1204B8     886            lcall Timer0_Init
-0A27 120522     887       lcall Timer2_Init
-0A2A 12008A     888            lcall ELCD_4BIT
-0A2D 1204D4     889            lcall Initialize_Serial_Port
-0A30            890   
-0A30            891   loop:
-0A30            892            ; Check the FSM for KEY1 debounce
-0A30 1206CF     893            lcall KEY1_DEB
-0A33            894   
-0A33            895            ; Check the FSM for one second counter
-0A33 120705     896            lcall SEC_FSM
-0A36            897   
-0A36            898            ; Check the FSM for the overall control flow of the reflow process
-0A36 120965     899            lcall Control_FSM
-0A39            900   
-0A39            901            ; Update the LCD display based on the current state
-0A39            902            ;lcall LCD_Display_Update_func
-0A39            903   
-0A39            904            ; Update the pwm output for the ssr
-0A39 1208EE     905            lcall PWM_Wave 
-0A3C            906   
-0A3C            907            ; After initialization the program stays in this 'forever' loop
-0A3C 020A30     908            ljmp loop
-0A3F            909   
-0A3F            910   END
+085E            622   
+085E            623            ; compare whether base_power < proportional_gain_var
+085E C200       624            clr mf
+0860 1201D1     625            lcall x_lt_y ; set mf to 1 if base_power < proportional_gain_var, clamp output to 0
+0863 30000E     626            jnb mf, bp_gteq_pgv
+0866 756800     627            mov proportional_gain_var, #low(NO_POWER)
+0869 756900     628            mov proportional_gain_var+1, #high(NO_POWER)
+086C 756A00     629            mov proportional_gain_var+2, #0
+086F 756B00     630            mov proportional_gain_var+3, #0
+0872 800F       631            sjmp saturator_soak
+0874            632   
+0874            633   bp_gteq_pgv:
+0874            634            ; calculate subtracted gain
+0874 1201AD     635            lcall sub32
+0877            636            ; x now holds the power output before the saturator
+0877 853268     637            mov proportional_gain_var, x
+087A 853369     638            mov proportional_gain_var+1, x+1
+087D 85346A     639            mov proportional_gain_var+2, x+2
+0880 85356B     640            mov proportional_gain_var+3, x+3
+0883            641   
+0883            642   saturator_soak:
+0883            643            ; proportional_gain_var now holds the power output before the saturator
+0883            644            ; saturate power output to max power
+0883 856832     645            mov x, proportional_gain_var
+0886 856933     646            mov x+1, proportional_gain_var+1
+0889 856A34     647            mov x+2, proportional_gain_var+2
+088C 856B35     648            mov x+3, proportional_gain_var+3
+088F            649   
+088F 7536DC     650            mov y+0, #low (MAX_POWER % 0x10000) 
+0892 753705     650            mov y+1, #high(MAX_POWER % 0x10000) 
+0895 753800     650            mov y+2, #low (MAX_POWER / 0x10000) 
+0898 753900     650            mov y+3, #high(MAX_POWER / 0x10000) 
+089B            651   
+089B C200       652            clr mf
+089D 1201ED     653            lcall x_gt_y ; set mf to 1 if calculated power output greater than max power
+08A0 20000F     654            jb mf, saturated_soak
+08A3            655            ; set power_output to calculated power if not saturated
+08A3 856857     656            mov power_output, proportional_gain_var
+08A6 856958     657            mov power_output+1, proportional_gain_var+1
+08A9 856A59     658            mov power_output+2, proportional_gain_var+2
+08AC 856B5A     659            mov power_output+3, proportional_gain_var+3
+08AF 020903     660            ljmp power_control_done
+08B2            661   
+08B2            662   saturated_soak:
+08B2 7557DC     663            mov power_output, #low(MAX_POWER)
+08B5 755805     664            mov power_output+1, #high(MAX_POWER)
+08B8 755900     665            mov power_output+2, #0
+08BB 755A00     666            mov power_output+3, #0
+08BE 020903     667            ljmp power_control_done
+08C1            668   
+08C1            669   
+08C1            670   state4_power_control:
+08C1            671            ; ramp to reflow, max power
+08C1 B4040F     672            cjne a, #4, state5_power_control
+08C4 7557DC     673            mov power_output, #low(MAX_POWER)
+08C7 755805     674            mov power_output+1, #high(MAX_POWER)
+08CA 755900     675            mov power_output+2, #0
+08CD 755A00     676            mov power_output+3, #0
+08D0 020903     677            ljmp power_control_done
+08D3            678   
+08D3            679   state5_power_control:
+08D3            680            ; reflow 20% base power
+08D3 B4050F     681            cjne a, #5, state6_power_control
+08D6 75572C     682            mov power_output, #low(BASE_POWER)  
+08D9 755801     683            mov power_output+1, #high(BASE_POWER)
+08DC 755900     684            mov power_output+2, #0
+08DF 755A00     685            mov power_output+3, #0
+08E2 020903     686            ljmp power_control_done
+08E5            687   
+08E5            688   state6_power_control:
+08E5            689            ; cooling 0% power
+08E5 B4060F     690            cjne a, #6, state_7_power_control
+08E8 755700     691            mov power_output, #low(NO_POWER)
+08EB 755800     692            mov power_output+1, #high(NO_POWER)
+08EE 755900     693            mov power_output+2, #0
+08F1 755A00     694            mov power_output+3, #0
+08F4 020903     695            ljmp power_control_done
+08F7            696   
+08F7            697   state_7_power_control:
+08F7            698            ; idle 0% power
+08F7 755700     699            mov power_output, #low(NO_POWER)
+08FA 755800     700            mov power_output+1, #high(NO_POWER)
+08FD 755900     701            mov power_output+2, #0
+0900 755A00     702            mov power_output+3, #0
+0903            703   
+0903            704   power_control_done:
+0903 22         705            ret
+0904            706   
+0904            707   
+0904            708   
+0904            709   ;-------------------------------------------------------------------------------
+0904            710   ; PWM
+0904            711   ; generate pwm signal for the ssr ; 1.5s period for the pwm signal; with 1 watt 
+0904            712   ; clarity for the pwm signal; input parameter: power_output; used buffers: x, y
+0904            713   PWM_Wave: ; call pwm generator when 1 ms flag is triggered
+0904 100202     714            jbc one_millisecond_flag, pwm_wave_generator
+0907 8071       715            sjmp end_pwm_generator
+0909            716   
+0909            717   pwm_wave_generator:
+0909 C200       718            clr mf
+090B            719            ; move pwm counter value into x for comparison purpose
+090B 855B32     720            mov x, pwm_counter
+090E 855C33     721            mov x+1, pwm_counter+1
+0911 855D34     722            mov x+2, pwm_counter+2
+0914 855E35     723            mov x+3, pwm_counter+3
+0917            724   
+0917 7536DB     725            mov y+0, #low (PWM_PERIOD % 0x10000) 
+091A 753705     725            mov y+1, #high(PWM_PERIOD % 0x10000) 
+091D 753800     725            mov y+2, #low (PWM_PERIOD / 0x10000) 
+0920 753900     725            mov y+3, #high(PWM_PERIOD / 0x10000) 
+0923            726   
+0923            727            ; compare x(pwm_counter) and y(1499) if x=y, wrap x back to 0; else increase x by 1
+0923 120209     728            lcall x_eq_y 
+0926 20001D     729            jb mf, wrap_pwm_counter
+0929            730            ; x not equal 1499, increment by 1
+0929 753601     731            mov y+0, #low (1 % 0x10000) 
+092C 753700     731            mov y+1, #high(1 % 0x10000) 
+092F 753800     731            mov y+2, #low (1 / 0x10000) 
+0932 753900     731            mov y+3, #high(1 / 0x10000) 
+0935 12018A     732            lcall add32
+0938            733            ; update pwm_counter
+0938 85325B     734            mov pwm_counter, x
+093B 85335C     735            mov pwm_counter+1, x+1
+093E 85345D     736            mov pwm_counter+2, x+2
+0941 85355E     737            mov pwm_counter+3, x+3
+0944 8018       738            sjmp set_pwm
+0946            739   
+0946            740   wrap_pwm_counter:
+0946            741            ; x equal 1499, wrap to 0
+0946 753200     742            mov x+0, #low (0 % 0x10000) 
+0949 753300     742            mov x+1, #high(0 % 0x10000) 
+094C 753400     742            mov x+2, #low (0 / 0x10000) 
+094F 753500     742            mov x+3, #high(0 / 0x10000) 
+0952 85325B     743            mov pwm_counter, x
+0955 85335C     744            mov pwm_counter+1, x+1
+0958 85345D     745            mov pwm_counter+2, x+2
+095B 85355E     746            mov pwm_counter+3, x+3
+095E            747   
+095E            748   set_pwm:
+095E            749            ; compare with power_output, if pwm counter smaller than power_output, set pwm pin high; else set pwm pin low
+095E            750            ; load y with power output value
+095E 855736     751            mov y, power_output
+0961 855837     752            mov y+1, power_output+1
+0964 855938     753            mov y+2, power_output+2
+0967 855A39     754            mov y+3, power_output+3
+096A            755   
+096A            756            ; compare x(pwm counter) with y(power output)
+096A 1201D1     757            lcall x_lt_y
+096D 200006     758            jb mf, set_pwm_high ; set pwm pin high if pwm counter smaller than power output
+0970            759            ; set pwm pin low if pwm counter greater than power output
+0970 C293       760            clr PWM_OUT
+0972 C2EC       761            clr LEDRA.4
+0974 8004       762            sjmp end_pwm_generator
+0976            763   
+0976            764   set_pwm_high:
+0976 D293       765            setb PWM_OUT
+0978 D2EC       766            setb LEDRA.4
+097A            767   
+097A            768   end_pwm_generator:
+097A 22         769            ret
+097B            770   ;-------------------------------------------------------------------------------;
+097B            771   
+097B            772   ;-------------------------------------------------------------------------------;
+097B            773   ; main control fsm for the entire process
+097B            774   Control_FSM:
+097B E567       775            mov a, Control_FSM_state
+097D 8003       776            sjmp Control_FSM_state0
+097F            777   
+097F            778   Control_FSM_state0_a:
+097F 756700     779            mov Control_FSM_state, #0
+0982            780   Control_FSM_state0:
+0982 B40007     781            cjne a, #0, Control_FSM_state1
+0985 100D02     782            jbc PB0_flag, Control_FSM_state1_a
+0988 8057       783            sjmp Control_FSM_done
+098A            784   
+098A            785   Control_FSM_state1_a:
+098A 0567       786            inc Control_FSM_state
+098C            787   Control_FSM_state1:
+098C B4010C     788            cjne a, #1, Control_FSM_state2
+098F 100E02     789            jbc PB1_flag, Control_FSM_state1_b
+0992 804D       790            sjmp Control_FSM_done
+0994            791   Control_FSM_state1_b:
+0994 100B02     792            jbc config_finish_signal, Control_FSM_state2_a
+0997 8048       793            sjmp Control_FSM_done
+0999            794   
+0999            795   Control_FSM_state2_a:
+0999 0567       796            inc Control_FSM_state
+099B            797   Control_FSM_state2:
+099B B4020A     798            cjne a, #2, Control_FSM_state3
+099E 100F2C     799            jbc PB2_flag, Control_FSM_state6_a
+09A1 100302     800            jbc soak_temp_reached, Control_FSM_state3_a
+09A4 803B       801            sjmp Control_FSM_done
+09A6            802   
+09A6            803   Control_FSM_state3_a:
+09A6 0567       804            inc Control_FSM_state
+09A8            805   Control_FSM_state3:
+09A8 B4030A     806            cjne a, #3, Control_FSM_state4
+09AB 100F1F     807            jbc PB2_flag, Control_FSM_state6_a
+09AE 100602     808            jbc soak_time_reached, Control_FSM_state4_a
+09B1 802E       809            sjmp Control_FSM_done
+09B3            810   
+09B3            811   Control_FSM_state4_a:
+09B3 0567       812            inc Control_FSM_state   
+09B5            813   Control_FSM_state4:
+09B5 B4040A     814            cjne a, #4, Control_FSM_state5
+09B8 100F12     815            jbc PB2_flag, Control_FSM_state6_a
+09BB 100402     816            jbc reflow_temp_reached, Control_FSM_state5_a
+09BE 8021       817            sjmp Control_FSM_done
+09C0            818   
+09C0            819   Control_FSM_state5_a:
+09C0 0567       820            inc Control_FSM_state
+09C2            821   Control_FSM_state5:
+09C2 B4050A     822            cjne a, #5, Control_FSM_state6
+09C5 100F05     823            jbc PB2_flag, Control_FSM_state6_a
+09C8 100702     824            jbc reflow_time_reached, Control_FSM_state6_a
+09CB 8014       825            sjmp Control_FSM_done
+09CD            826   
+09CD            827   Control_FSM_state6_a:
+09CD 0567       828            inc Control_FSM_state
+09CF            829   Control_FSM_state6:
+09CF B4060F     830            cjne a, #6, Control_FSM_done
+09D2 100502     831            jbc cooling_temp_reached, Control_FSM_state7_a
+09D5 800A       832            sjmp Control_FSM_done
+09D7            833   
+09D7            834   Control_FSM_state7_a:
+09D7 0567       835            inc Control_FSM_state
+09D9            836   Control_FSM_state7:
+09D9 B40705     837            cjne a, #7, Control_FSM_done
+09DC 100DA0     838            jbc PB0_flag, Control_FSM_state0_a
+09DF 8000       839            sjmp Control_FSM_done
+09E1            840   
+09E1            841   Control_FSM_done:
+09E1 22         842            ret
+09E2            843   ;-------------------------------------------------------------------------------;
+09E2            844   
+09E2            845   
+09E2            846   ;---------------------------------;
+09E2            847   ;         Main program.           ;
+09E2            848   ;---------------------------------;
+09E2            849   main:
+09E2            850            ; -------------------------------------------------------------------;
+09E2            851            ; Initialization
+09E2 75817F     852       mov SP, #0x7F
+09E5            853   
+09E5            854            ; We use the pins of P0 to control the LCD.  Configure as outputs.
+09E5 759A7F     855       mov P0MOD, #01111111b ; P0.0 to P0.6 are outputs.  ('1' makes the pin output)
+09E8            856       ; We use pins P1.5 and P1.1 as outputs also.  Configure accordingly.
+09E8 759B22     857       mov P1MOD, #00100010b ; P1.5 and P1.1 are outputs
+09EB 759CFF     858       mov P2MOD, #0xff
+09EE 759DFF     859       mov P3MOD, #0xff
+09F1            860       ; Turn off all the LEDs
+09F1 75E800     861       mov LEDRA, #0 ; LEDRA is bit addressable
+09F4 759500     862       mov LEDRB, #0 ; LEDRB is NOT bit addresable
+09F7            863   
+09F7            864            ; Enable Global interrupts
+09F7 D2AF       865       setb EA  
+09F9            866   
+09F9            867            ; FSM initial states
+09F9 756500     868            mov KEY1_DEB_state, #0
+09FC 756600     869            mov SEC_FSM_state, #0
+09FF 756700     870            mov Control_FSM_state, #0
+0A02            871            ; FSM timers initialization
+0A02 756300     872            mov KEY1_DEB_timer, #0
+0A05 756400     873            mov SEC_FSM_timer, #0
+0A08            874            ; time counters initialization
+0A08 753000     875            mov current_time_sec, #0
+0A0B 753100     876            mov current_time_minute, #0
+0A0E            877            ; Initialize counter to zero
+0A0E 755B00     878       mov pwm_counter, #0
+0A11 755C00     879            mov pwm_counter+1, #0
+0A14 755D00     880            mov pwm_counter+2, #0
+0A17 755E00     881            mov pwm_counter+3, #0
+0A1A            882            ; Initialize power output
+0A1A 755A00     883            mov power_output+3, #0
+0A1D 755900     884            mov power_output+2, #0
+0A20 755802     885            mov power_output+1, #02H
+0A23 7557EE     886            mov power_output, #0EEH ; (initilize to 750 for testing)
+0A26            887   
+0A26            888            ; Clear all the flags
+0A26 C20D       889            clr PB0_flag
+0A28 C20E       890            clr PB1_flag
+0A2A C20F       891            clr PB2_flag
+0A2C C201       892            clr one_second_flag
+0A2E C20B       893            clr config_finish_signal
+0A30 C203       894            clr soak_temp_reached
+0A32 C206       895            clr soak_time_reached
+0A34 C204       896            clr reflow_temp_reached
+0A36 C207       897            clr reflow_time_reached
+0A38 C205       898            clr cooling_temp_reached
+0A3A            899   
+0A3A 1204B8     900            lcall Timer0_Init
+0A3D 120522     901       lcall Timer2_Init
+0A40 12008A     902            lcall ELCD_4BIT
+0A43 1204D4     903            lcall Initialize_Serial_Port
+0A46            904   
+0A46            905   loop:
+0A46            906            ; Check the FSM for KEY1 debounce
+0A46 1206CF     907            lcall KEY1_DEB
+0A49            908   
+0A49            909            ; Check the FSM for one second counter
+0A49 120705     910            lcall SEC_FSM
+0A4C            911   
+0A4C            912            ; Check the FSM for the overall control flow of the reflow process
+0A4C 12097B     913            lcall Control_FSM
+0A4F            914   
+0A4F            915            ; Update the LCD display based on the current state
+0A4F            916            ;lcall LCD_Display_Update_func
+0A4F            917   
+0A4F            918            ; Update the pwm output for the ssr
+0A4F 120904     919            lcall PWM_Wave 
+0A52            920   
+0A52            921            ; After initialization the program stays in this 'forever' loop
+0A52 020A46     922            ljmp loop
+0A55            923   
+0A55            924   END
