@@ -529,9 +529,8 @@ Temp_Compare:
     push AR0
     push AR1
     push AR2
-;-------------------------------------------------------------------------------;
-    ; Check: current_temp >= soak_temp ?
-;-------------------------------------------------------------------------------;
+    
+; Check: current_temp >= soak_temp ?
     ; Copy current_temp of x (math32 operand A)
     mov  R0, #current_temp
     mov  R1, #x
@@ -549,11 +548,8 @@ Temp_Compare:
     jb   mf, Temp_Soak_NotReached
     setb soak_temp_reached
 
-;-------------------------------------------------------------------------------;
+; Check: current_temp >= reflow_temp ?
 Temp_Soak_NotReached:
-;-------------------------------------------------------------------------------;
-    ; Check: current_temp >= reflow_temp ?
-;-------------------------------------------------------------------------------;
     ; Copy current_temp of x
     mov  R0, #current_temp
     mov  R1, #x
@@ -569,9 +565,7 @@ Temp_Soak_NotReached:
     jb   mf, Temp_Reflow_NotReached
     setb reflow_temp_reached
 
-;-------------------------------------------------------------------------------;
 Temp_Reflow_NotReached:
-
     pop  AR2
     pop  AR1
     pop  AR0
@@ -607,10 +601,7 @@ Time_Compare:
     push AR1
     push AR2
 
-;-------------------------------------------------------------------------------;
-    ; Check: current_time >= soak_time ?
-;-------------------------------------------------------------------------------;
-
+; Check: current_time >= soak_time ?
     ; Copy current_time of x
     mov  R0, #current_time
     mov  R1, #x
@@ -626,12 +617,8 @@ Time_Compare:
     jb   mf, Time_Soak_NotReached
     setb soak_time_reached
 
+; Check: current_time >= reflow_time ?
 Time_Soak_NotReached:
-
-;-------------------------------------------------------------------------------;
-    ; Check: current_time >= reflow_time ?
-;-------------------------------------------------------------------------------;
-
     ; Copy current_time of x
     mov  R0, #current_time
     mov  R1, #x
@@ -648,7 +635,6 @@ Time_Soak_NotReached:
     setb reflow_time_reached
 
 Time_Reflow_NotReached:
-
     pop  AR2
     pop  AR1
     pop  AR0
@@ -684,6 +670,7 @@ Copy4_Loop:
     inc  R1
     djnz R2, Copy4_Loop
     ret
+
 ;-------------------------------------------------------------------------------;
 ; Abort condition safety check Temperature time
 ;
@@ -702,7 +689,6 @@ Copy4_Loop:
 ;
 ;   the Load_Y constants accordingly.
 ;-------------------------------------------------------------------------------;
-
 Safety_Check_TC:
     push acc
     push psw
@@ -747,6 +733,7 @@ Safety_TC_Done:
     pop  psw
     pop  acc
     ret
+
 ;-------------------------------------------------------------------------------;
 ; Main Control FSM for the entire process
 ;-------------------------------------------------------------------------------;
