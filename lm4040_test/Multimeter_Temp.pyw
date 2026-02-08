@@ -2,141 +2,243 @@
 from tkinter import *
 import time
 import serial
-import serial.tools.list_ports
 import sys
 import kconvert
+import csv
+import os
 
 top = Tk()
-top.resizable(0,0)
-top.title("Fluke_45/Tek_DMM4020 K-type Thermocouple")
+top.resizable(0, 0)
+top.title("DMM (COM13) vs DE10 (COM12) Thermocouple Compare")
 
-#ATTENTION: Make sure the multimeter is configured at 9600 baud, 8-bits, parity none, 1 stop bit, echo Off
+# ===================== USER SETTINGS =====================
+DMM_PORT  = "COM13"      # Fluke/Tek DMM4020
+DMM_BAUD  = 9600
+
+DE10_PORT = "COM12"      # DE10 USB-Serial adapter
+DE10_BAUD = 115200
+
+UPDATE_MS = 1000         # 1 Hz to match DE10 loop
+# =========================================================
 
 CJTemp = StringVar()
 Temp = StringVar()
 DMMout = StringVar()
 portstatus = StringVar()
 DMM_Name = StringVar()
-connected=0
-global ser
-   
+
+ser = None    # DMM
+ser2 = None   # DE10
+
+last_de10_raw = None    # raw value from DE10 (scaled by 1/1000)
+
+# ---------------- CSV SETTINGS ----------------
+CSV_FILENAME = os.path.join(
+    os.path.dirname(os.path.abspath(sys.argv[0])),
+    "thermocouple_log.csv"
+)
+
+with open(CSV_FILENAME, "w", newline="") as f:
+    w = csv.writer(f)
+    w.writerow([
+        "python_temp_C",
+        "de10_temp_C",
+        "python_minus_de10_C"
+    ])
+# ---------------------------------------------
+
 def Just_Exit():
     top.destroy()
     try:
-        ser.close()
+        if ser:
+            ser.close()
     except:
-        dummy=0
+        pass
+    try:
+        if ser2:
+            ser2.close()
+    except:
+        pass
 
-def update_temp():
-    global ser, connected
-    if connected==0:
-        top.after(5000, FindPort) # Not connected, try to reconnect again in 5 seconds
+def log_to_csv(py_c, de10_c):
+    with open(CSV_FILENAME, "a", newline="") as f:
+        w = csv.writer(f)
+        if de10_c is None:
+            w.writerow([round(py_c, 1), "", ""])
+        else:
+            diff = py_c - de10_c
+            w.writerow([
+                round(py_c, 1),
+                round(de10_c, 1),
+                round(diff, 1)
+            ])
+        f.flush()
+
+def try_parse_number(text):
+    """
+    Extract first valid float from a DE10 serial line.
+    Example: 'T=0.022 C' -> 0.022
+    """
+    s = text.strip()
+    s = s.replace("T=", " ")
+    s = s.replace("V=", " ")
+    s = s.replace("=", " ")
+    s = s.replace("C", " ")
+    s = s.replace("°", " ")
+    for tok in s.replace(",", " ").split():
+        try:
+            return float(tok)
+        except:
+            continue
+    return None
+
+def drain_de10():
+    """Non-blocking read of DE10; keep most recent valid value"""
+    global last_de10_raw
+    if ser2 is None:
         return
     try:
-        strin = ser.readline() # Read the requested value, for example "+0.234E-3 VDC"
-        strin = strin.rstrip()
-        strin = strin.decode()
-        print(strin)
-        ser.readline() # Read and discard the prompt "=>"
-        if len(strin)>1:
-            if strin[1]=='>': # Out of sync?
-                strin = ser.readline() # Read the value again
-        ser.write(b"MEAS1?\r\n") # Request next value from multimeter
+        n = ser2.in_waiting
+        if n <= 0:
+            return
+        data = ser2.read(n).decode(errors="ignore")
+        lines = data.replace("\r", "\n").split("\n")
+        for s in reversed(lines):
+            if s.strip():
+                v = try_parse_number(s)
+                if v is not None:
+                    last_de10_raw = v
+                break
     except:
-        connected=0
-        DMMout.set("----")
-        Temp.set("----");
-        portstatus.set("Communication Lost")
-        DMM_Name.set ("--------")
-        top.after(5000, FindPort) # Try to reconnect again in 5 seconds
         return
-    strin_clean = strin.replace("VDC","") # get rid of the units as the 'float()' function doesn't like it
-    if len(strin_clean) > 0:      
-       DMMout.set(strin.replace("\r", "").replace("\n", "")) # display the information received from the multimeter
 
-       try:
-           val=float(strin_clean)*1000.0 # Convert from volts to millivolts
-           valid_val=1;
-       except:
-           valid_val=0
+def update_temp():
+    global last_de10_raw
 
-       try:
-          cj=float(CJTemp.get()) # Read the cold junction temperature in degrees centigrade
-       except:
-          cj=0.0 # If the input is blank, assume cold junction temperature is zero degrees centigrade
+    # --- Update DE10 first ---
+    drain_de10()
 
-       if valid_val == 1 :
-           ktemp=round(kconvert.mV_to_C(val, cj),1)
-           if ktemp < -200:  
-               Temp.set("UNDER")
-           elif ktemp > 1372:
-               Temp.set("OVER")
-           else:
-               Temp.set(ktemp)
-       else:
-           Temp.set("----");
+    # --- Read DMM ---
+    try:
+        line = ser.readline().rstrip().decode(errors="ignore")
+        ser.readline()  # discard "=>"
+        if len(line) > 1 and line[1] == '>':
+            line = ser.readline().decode(errors="ignore")
+        ser.write(b"MEAS1?\r\n")
+    except Exception as e:
+        DMMout.set("----")
+        Temp.set("----")
+        portstatus.set("DMM read error | " + str(e))
+        top.after(2000, update_temp)
+        return
+
+    DMMout.set(line.replace("\r", "").replace("\n", ""))
+
+    try:
+        mv = float(line.replace("VDC", "").strip()) * 1000.0
+        valid = True
+    except:
+        valid = False
+
+    try:
+        cj = float(CJTemp.get())
+    except:
+        cj = 0.0
+
+    # --- Apply DE10 scaling ---
+    # DE10 sends temperature scaled by 1/1000
+    if last_de10_raw is not None:
+        de10_c = last_de10_raw * 1000.0
     else:
-       Temp.set("----");
-       connected=0;
-    top.after(500, update_temp) # The multimeter is slow and the baud rate is slow: two measurement per second tops!
+        de10_c = None
 
-def FindPort():
-   global ser, connected
-   try:
-       ser.close()
-   except:
-       dummy=0
-       
-   connected=0
-   DMM_Name.set ("--------")
-   portlist=list(serial.tools.list_ports.comports())
-   for item in reversed(portlist):
-      portstatus.set("Trying port " + item[0])
-      top.update()
-      try:
-         ser = serial.Serial(item[0], 9600, timeout=0.5)
-         ser.write(b"\x03") # Request prompt from possible multimeter
-         pstring = ser.readline() # Read the prompt "=>"
-         pstring=pstring.rstrip()
-         pstring=pstring.decode()
-         # print(pstring)
-         if len(pstring) > 1:
-            if pstring[1]=='>':
-               ser.timeout=3  # Three seconds timeout to receive data should be enough
-               portstatus.set("Connected to " + item[0])
-               ser.write(b"VDC; RATE S; *IDN?\r\n") # Measure DC voltage, set scan rate to 'Slow' for max resolution, get multimeter ID
-               devicename=ser.readline()
-               devicename=devicename.rstrip()
-               devicename=devicename.decode()
-               DMM_Name.set(devicename.replace("\r", "").replace("\n", ""))
-               ser.readline() # Read and discard the prompt "=>"
-               ser.write(b"MEAS1?\r\n") # Request first value from multimeter
-               connected=1
-               top.after(1000, update_temp)
-               break
+    if valid:
+        ktemp = round(kconvert.mV_to_C(mv, cj), 1)
+
+        if ktemp < -200:
+            Temp.set("UNDER")
+        elif ktemp > 1372:
+            Temp.set("OVER")
+        else:
+            Temp.set(ktemp)
+            log_to_csv(ktemp, de10_c)
+
+            if de10_c is None:
+                portstatus.set("Logging (waiting for DE10)")
             else:
-               ser.close()
-         else:
-            ser.close()
-      except:
-         connected=0
-   if connected==0:
-      portstatus.set("Multimeter not found")
-      top.after(5000, FindPort) # Try again in 5 seconds
+                portstatus.set(
+                    "Logging OK | Δ = " +
+                    str(round(ktemp - de10_c, 1)) + " C"
+                )
+    else:
+        Temp.set("----")
+        portstatus.set("Bad DMM parse")
 
+    top.after(UPDATE_MS, update_temp)
+
+def init_ports():
+    global ser, ser2
+
+    portstatus.set("Opening ports...")
+    top.update()
+
+    # --- DE10 ---
+    try:
+        ser2 = serial.Serial(DE10_PORT, DE10_BAUD, timeout=0)
+        try:
+            ser2.setDTR(True)
+            ser2.setRTS(True)
+        except:
+            pass
+    except Exception as e:
+        portstatus.set("DE10 open failed | " + str(e))
+        return
+
+    # --- DMM ---
+    try:
+        ser = serial.Serial(DMM_PORT, DMM_BAUD, timeout=0.5)
+        time.sleep(0.2)
+        ser.write(b"\x03")
+        _ = ser.readline()
+        ser.timeout = 3
+        ser.write(b"VDC; RATE S; *IDN?\r\n")
+        devicename = ser.readline().rstrip().decode(errors="ignore")
+        DMM_Name.set(devicename)
+        ser.readline()
+        ser.write(b"MEAS1?\r\n")
+    except Exception as e:
+        portstatus.set("DMM open failed | " + str(e))
+        return
+
+    portstatus.set(
+        "Ports open | DE10=" + DE10_PORT +
+        " | DMM=" + DMM_PORT
+    )
+    top.after(1000, update_temp)
+
+# ---------------- UI ----------------
 Label(top, text="Cold Junction Temperature:").grid(row=1, column=0)
-Entry(top, bd =1, width=7, textvariable=CJTemp).grid(row=2, column=0)
+Entry(top, bd=1, width=7, textvariable=CJTemp).grid(row=2, column=0)
+
 Label(top, text="Multimeter reading:").grid(row=3, column=0)
-Label(top, text="xxxx", textvariable=DMMout, width=20, font=("Helvetica", 20), fg="red").grid(row=4, column=0)
+Label(top, textvariable=DMMout, width=20,
+      font=("Helvetica", 20), fg="red").grid(row=4, column=0)
+
 Label(top, text="Thermocouple Temperature (C)").grid(row=5, column=0)
-Label(top, textvariable=Temp, width=5, font=("Helvetica", 100), fg="blue").grid(row=6, column=0)
-Label(top, text="xxxx", textvariable=portstatus, width=40, font=("Helvetica", 12)).grid(row=7, column=0)
-Label(top, text="xxxx", textvariable=DMM_Name, width=40, font=("Helvetica", 12)).grid(row=8, column=0)
-Button(top, width=11, text = "Exit", command = Just_Exit).grid(row=9, column=0)
+Label(top, textvariable=Temp, width=5,
+      font=("Helvetica", 100), fg="blue").grid(row=6, column=0)
 
-CJTemp.set ("22")
-DMMout.set ("NO DATA")
-DMM_Name.set ("--------")
+Label(top, textvariable=portstatus, width=80,
+      font=("Helvetica", 12)).grid(row=7, column=0)
+Label(top, textvariable=DMM_Name, width=80,
+      font=("Helvetica", 12)).grid(row=8, column=0)
 
-top.after(500, FindPort)
+Button(top, width=11, text="Exit", command=Just_Exit).grid(row=9, column=0)
+
+CJTemp.set("22")
+DMMout.set("NO DATA")
+DMM_Name.set("--------")
+portstatus.set("CSV: " + CSV_FILENAME)
+
+init_ports()
 top.mainloop()
