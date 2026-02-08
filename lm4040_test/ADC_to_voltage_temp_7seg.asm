@@ -15,7 +15,6 @@ dseg at 30h
 x:		ds	4
 y:		ds	4
 bcd:	ds	5
-VAL_LM4040: ds 2
 
 bseg
 
@@ -220,42 +219,40 @@ mycode:
 	lcall Wait50ms
 
 forever:
-	; Read the LM4040 on ADC_IN1 (channel 1)
-	mov ADC_C, #0x01
-	; Save LM4040 result for later use
-	mov VAL_LM4040+0, ADC_L
-	mov VAL_LM4040+1, ADC_H
-
-	; Read the signal connected to AIN7 (channel 7)
-	mov ADC_C, #0x07
-    
-    ; Convert to voltage
-	mov x+0, ADC_L
-	mov x+1, ADC_H
-	; Pad other bits with zero
-	mov x+2, #0
+	mov a, SWA ; The first three switches select the channel to read
+	anl a, #0x07
+	mov ADC_C, #0
+	
+	; Load 32-bit 'x' with 12-bit adc result
 	mov x+3, #0
-	Load_y(40959) ; The MEASURED voltage reference: 4.0959V, with 4 decimal places
+	mov x+2, #0
+	mov x+1, ADC_H
+	mov x+0, ADC_L
+	
+	; Convert to voltage by multiplying by 5.000 and dividing by 4096
+	Load_y(5000)
 	lcall mul32
-	; Retrive the ADC LM4040 value
-	mov y+0, VAL_LM4040+0
-	mov y+1, VAL_LM4040+1
-	; Pad other bits with zero
-	mov y+2, #0
-	mov y+3, #0
+	Load_y(4096)
 	lcall div32
 	
-	; Convert to BCD and display
+	Load_y(1000) ; convert to microvolts
+    lcall mul32
+    Load_y(12300) ; 41 * 300
+    lcall div32
+
+    Load_y(22) ; add cold junction temperature
+    lcall add32
+
 	lcall hex2bcd
 	lcall Display_Voltage_7seg
 	lcall Display_Voltage_LCD
 	lcall Display_Voltage_Serial
 
-	; Wait 250 ms between conversions
-	lcall Wait50ms
-	lcall Wait50ms
-	lcall Wait50ms
-	lcall Wait50ms
-	ljmp forever
+	    ; Limit to 1 sample per second
+mov R7,#20
+delay_loop:
+lcall Wait50ms
+djnz R7, delay_loop
+ljmp forever
 	
 end
