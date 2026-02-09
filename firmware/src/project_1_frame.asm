@@ -6,22 +6,22 @@ org 0x0000
     ljmp main
 ; External interrupt 0 vector
 org 0x0003
-	reti
+    reti
 ; Timer/Counter 0 overflow interrupt vector
 org 0x000B
-	ljmp Timer0_ISR
+    ljmp Timer0_ISR
 ; External interrupt 1 vector
 org 0x0013
-	reti
+    reti
 ; Timer/Counter 1 overflow interrupt vector
 org 0x001B
-	reti
+    reti
 ; Serial port receive/transmit interrupt vector
 org 0x0023 
-	reti
+    reti
 ; Timer/Counter 2 overflow interrupt vector
 org 0x002B
-	ljmp Timer2_ISR
+    ljmp Timer2_ISR
 ;-------------------------------------------------------------------------------
 ; includes
 $NOLIST
@@ -37,13 +37,19 @@ dseg at 0x30
 current_time_sec:     ds 1
 current_time_minute:  ds 1
 ; math32 buffer variables
-x:		ds	4
-y:		ds	4
-bcd:	ds	5
+x:      ds  4
+y:      ds  4
+bcd:    ds  5
 
 current_temp: ds 4 ;
 soak_temp:    ds 4 ;
 reflow_temp:  ds 4 ;
+
+wait25_btn_cnt:    ds 1
+wait25_keypad_cnt: ds 1
+wait25_adc_cnt:    ds 1
+wait25_lcd_cnt:    ds 1
+wait25_count: ds 1  
 
 current_time: ds 4 ;
 soak_time:    ds 4 ;
@@ -55,7 +61,7 @@ pwm_counter: ds 4 ; counter for pwm (0-1500)
 KEY1_DEB_timer: ds 1
 SEC_FSM_timer:  ds 1
 KEY1_DEB_state:    ds 1
-SEC_FSM_state: 	   ds 1
+SEC_FSM_state:     ds 1
 Control_FSM_state: ds 1 
 
 Current_State:     ds 1
@@ -76,7 +82,7 @@ Buf_Refl_Time: ds 5
 ;-------------------------------------------------------------------------------
 ; bit operation setb, clr, jb, and jnb
 bseg
-mf:		dbit 1 ; math32 sign
+mf:     dbit 1 ; math32 sign
 one_second_flag: dbit 1
 one_ms_pwm_flag: dbit 1 ; one_millisecond_flag for pwm signal
 
@@ -101,12 +107,24 @@ tc_startup_window: dbit 1   ; 1 = still within first 60 seconds of the run
 PB0_flag: dbit 1 ; start entire program
 PB1_flag: dbit 1 ; start soak
 PB2_flag: dbit 1 ; pause process
+
+; BSEG (Bit Segment)
+wait25_active: dbit 1 ; 1 = We are currently waiting
+wait25_done:   dbit 1 ; 1 = The 25ms has finished
+wait25_btn_active:    dbit 1
+wait25_btn_done:      dbit 1
+wait25_keypad_active: dbit 1
+wait25_keypad_done:   dbit 1
+wait25_adc_active:    dbit 1
+wait25_adc_done:      dbit 1
+wait25_lcd_active:    dbit 1
+wait25_lcd_done:      dbit 1
 ; 11 bits used
 
 ;-------------------------------------------------------------------------------
 cseg
 CLK            EQU 33333333 ; Microcontroller system crystal frequency in Hz
-BAUD 		   EQU 57600
+BAUD           EQU 57600
 
 TIMER0_RATE    EQU 4096     ; 2048Hz squarewave (peak amplitude of CEM-1203 speaker)
 TIMER0_RELOAD  EQU ((65536-(CLK/(12*TIMER0_RATE)))) ; The prescaler in the CV-8052 
@@ -121,7 +139,7 @@ PWM_PERIOD     EQU 1499 ; 1.5s period
 
 SOUND_OUT      EQU P1.5 ; Pin connected to the speaker
 
-PWM_OUT		   EQU P1.3 ; Pin connected to the ssr for outputing pwm signal
+PWM_OUT        EQU P1.3 ; Pin connected to the ssr for outputing pwm signal
 
 ; These 'equ' must match the wiring between the DE10Lite board and the LCD!
 ; P0 is in connector JPIO.
@@ -183,51 +201,51 @@ String_Blank:    db '                ', 0
 ;-------------------------------------------------------------------------------
 ; Timers Setting:
 ;   Timer 0: 2kHz square wave generation at P1.5 (speaker)
-; 	Timer 1: Serial port baud rate 57600 generator
-;  	Timer 2: 1ms interrupt for BCD counter increment/decrement
+;   Timer 1: Serial port baud rate 57600 generator
+;   Timer 2: 1ms interrupt for BCD counter increment/decrement
 ;-------------------------------------------------------------------------------
 ; Routine to initialize the ISR for Timer 0 ;
 Timer0_Init:
-	mov a, TMOD
-	anl a, #0xf0 ; Clear the bits for timer 0
-	orl a, #0x01 ; Configure timer 0 as 16-timer
-	mov TMOD, a
-	mov TH0, #high(TIMER0_RELOAD)
-	mov TL0, #low(TIMER0_RELOAD)
-	; Enable the timer and interrupts
+    mov a, TMOD
+    anl a, #0xf0 ; Clear the bits for timer 0
+    orl a, #0x01 ; Configure timer 0 as 16-timer
+    mov TMOD, a
+    mov TH0, #high(TIMER0_RELOAD)
+    mov TL0, #low(TIMER0_RELOAD)
+    ; Enable the timer and interrupts
     setb ET0  ; Enable timer 0 interrupt
     setb TR0  ; Start timer 0
-	ret
+    ret
 ; ISR for timer 0.  Set to execute every 1/4096Hz 
 ; to generate a 2048 Hz square wave at pin P1.5 
 Timer0_ISR:
-	;clr TF0  ; According to the data sheet this is done for us already.
-	mov TH0, #high(TIMER0_RELOAD) ; Timer 0 doesn't have autoreload in the CV-8052
-	mov TL0, #low(TIMER0_RELOAD)
-	cpl SOUND_OUT ; Connect speaker to P1.5
-	reti
+    ;clr TF0  ; According to the data sheet this is done for us already.
+    mov TH0, #high(TIMER0_RELOAD) ; Timer 0 doesn't have autoreload in the CV-8052
+    mov TL0, #low(TIMER0_RELOAD)
+    cpl SOUND_OUT ; Connect speaker to P1.5
+    reti
 ; -----------------------------------------------------------------------------------------------;
 
 ; Routine to initialize the serial port at 57600 baud (Timer 1 in mode 2)
 Initialize_Serial_Port:
-	; Configure serial port and baud rate
-	clr TR1 ; Disable timer 1
-	anl TMOD, #0x0f ; Mask the bits for timer 1
-	orl TMOD, #0x20 ; Set timer 1 in 8-bit auto reload mode
+    ; Configure serial port and baud rate
+    clr TR1 ; Disable timer 1
+    anl TMOD, #0x0f ; Mask the bits for timer 1
+    orl TMOD, #0x20 ; Set timer 1 in 8-bit auto reload mode
     orl PCON, #80H ; Set SMOD to 1
-	mov TH1, #low(TIMER_1_RELOAD)
-	mov TL1, #low(TIMER_1_RELOAD) 
-	setb TR1 ; Enable timer 1
-	mov SCON, #52H
-	ret
+    mov TH1, #low(TIMER_1_RELOAD)
+    mov TL1, #low(TIMER_1_RELOAD) 
+    setb TR1 ; Enable timer 1
+    mov SCON, #52H
+    ret
 
 ; uart sending functions
 putchar:
-	jbc	TI, putchar_L1
-	sjmp putchar
+    jbc TI, putchar_L1
+    sjmp putchar
 putchar_L1:
-	mov	SBUF,a
-	ret
+    mov SBUF,a
+    ret
 
 SendString:
     clr a
@@ -237,7 +255,7 @@ SendString:
     inc dptr
     sjmp SendString  
 SendString_L1:
-	ret
+    ret
 
 ;-------------------------------------------------------------------------------
 ; serial debugging
@@ -272,7 +290,7 @@ $include(..\inc\LCD_4bit_DE10Lite_no_RW.inc) ; LCD related functions and utility
 ;-----------------------------------------------------------------------------------------------;
 
 ;-------------------------------------------------------------------------------
-; Display Function for 7-segment displays		
+; Display Function for 7-segment displays       
 ;-------------------------------------------------------------------------------
 ; Look-up table for the 7-seg displays. (Segments are turn on with zero) 
 T_7seg:
@@ -282,75 +300,75 @@ T_7seg:
 
 ; Displays a BCD number pased in R0 in HEX5-HEX0
 Display_BCD_7_Seg_HEX10:
-	mov dptr, #T_7seg
-	mov a, R0
-	swap a
-	anl a, #0FH
-	movc a, @a+dptr
-	mov HEX1, a
-	mov a, R0
-	anl a, #0FH
-	movc a, @a+dptr
-	mov HEX0, a
-	ret
+    mov dptr, #T_7seg
+    mov a, R0
+    swap a
+    anl a, #0FH
+    movc a, @a+dptr
+    mov HEX1, a
+    mov a, R0
+    anl a, #0FH
+    movc a, @a+dptr
+    mov HEX0, a
+    ret
 
 Display_BCD_7_Seg_HEX32:
-	mov dptr, #T_7seg
-	mov a, R0
-	swap a
-	anl a, #0FH
-	movc a, @a+dptr
-	mov HEX3, a
-	mov a, R0
-	anl a, #0FH
-	movc a, @a+dptr
-	mov HEX2, a
-	ret
+    mov dptr, #T_7seg
+    mov a, R0
+    swap a
+    anl a, #0FH
+    movc a, @a+dptr
+    mov HEX3, a
+    mov a, R0
+    anl a, #0FH
+    movc a, @a+dptr
+    mov HEX2, a
+    ret
 
 Display_BCD_7_Seg_HEX54:
-	mov dptr, #T_7seg
-	mov a, R0
-	swap a
-	anl a, #0FH
-	movc a, @a+dptr
-	mov HEX5, a
-	mov a, R0
-	anl a, #0FH
-	movc a, @a+dptr
-	mov HEX4, a
-	ret
+    mov dptr, #T_7seg
+    mov a, R0
+    swap a
+    anl a, #0FH
+    movc a, @a+dptr
+    mov HEX5, a
+    mov a, R0
+    anl a, #0FH
+    movc a, @a+dptr
+    mov HEX4, a
+    ret
 
 ; The 8-bit hex number passed in the accumulator is converted to
 ; BCD and stored in [R1, R0]
 Hex_to_bcd_8bit:
-	mov b, #100
-	div ab
-	mov R1, a   ; After dividing, a has the 100s
-	mov a, b    ; Remainder is in register b
-	mov b, #10
-	div ab ; The tens are stored in a, the units are stored in b 
-	swap a
-	anl a, #0xf0
-	orl a, b
-	mov R0, a
-	ret
+    mov b, #100
+    div ab
+    mov R1, a   ; After dividing, a has the 100s
+    mov a, b    ; Remainder is in register b
+    mov b, #10
+    div ab ; The tens are stored in a, the units are stored in b 
+    swap a
+    anl a, #0xf0
+    orl a, b
+    mov R0, a
+    ret
 
 ;-------------------------------------------------------------------------------
-; Display Function for LCD 						
+; Display Function for LCD                      
 ;-------------------------------------------------------------------------------
 LCD_Display_Update_func:
-	push acc
-	
+    push acc
+    
     ; --- FIX: JUMP DISTANCE ERROR ---
     ; "LCD_Display_Update_Done" is too far away for a JNB instruction.
     ; We use a local label right here to exit quickly.
-	jnb state_change_signal, LCD_Local_Exit
+    jnb state_change_signal, LCD_Local_Exit
     ; --------------------------------
 
-	clr state_change_signal
-	mov a, Control_FSM_state
+    clr state_change_signal
+    mov a, Control_FSM_state
 
-	; --- IMPORTANT ADD ----
+    ; --- IMPORTANT ADD ----
     ; If we are in State 1 (Setup), DO NOT RUN THIS, let the keypad logic handle the screen
     cjne a, #1, LCD_Display_Update_0
     pop acc
@@ -363,139 +381,139 @@ LCD_Local_Exit:
 ; ----------------------------
 
 LCD_Display_Update_0:
-	cjne a, #0, LCD_Display_Update_1
-	Set_Cursor(1,1)
-	Send_Constant_String(#String_state0_1)
-	Set_Cursor(2,1)
-	Send_Constant_String(#String_state0_2)
-	ljmp LCD_Display_Update_done
+    cjne a, #0, LCD_Display_Update_1
+    Set_Cursor(1,1)
+    Send_Constant_String(#String_state0_1)
+    Set_Cursor(2,1)
+    Send_Constant_String(#String_state0_2)
+    ljmp LCD_Display_Update_done
 
 LCD_Display_Update_1:
-	cjne a, #1, LCD_Display_Update_2
-	Set_Cursor(1,1)
-	Send_Constant_String(#String_state1)
-	ljmp LCD_Display_Update_done
+    cjne a, #1, LCD_Display_Update_2
+    Set_Cursor(1,1)
+    Send_Constant_String(#String_state1)
+    ljmp LCD_Display_Update_done
 
 LCD_Display_Update_2:
-	cjne a, #2, LCD_Display_Update_3
-	Set_Cursor(1,1)
-	Send_Constant_String(#String_state2)
-	ljmp LCD_Display_Update_done
+    cjne a, #2, LCD_Display_Update_3
+    Set_Cursor(1,1)
+    Send_Constant_String(#String_state2)
+    ljmp LCD_Display_Update_done
 
 LCD_Display_Update_3:
-	cjne a, #3, LCD_Display_Update_4
-	Set_Cursor(1,1)
-	Send_Constant_String(#String_state3)
-	ljmp LCD_Display_Update_done
+    cjne a, #3, LCD_Display_Update_4
+    Set_Cursor(1,1)
+    Send_Constant_String(#String_state3)
+    ljmp LCD_Display_Update_done
 
 LCD_Display_Update_4:
-	cjne a, #4, LCD_Display_Update_5
-	Set_Cursor(1,1)
-	Send_Constant_String(#String_state4)
-	ljmp LCD_Display_Update_done
+    cjne a, #4, LCD_Display_Update_5
+    Set_Cursor(1,1)
+    Send_Constant_String(#String_state4)
+    ljmp LCD_Display_Update_done
 
 LCD_Display_Update_5:
-	cjne a, #5, LCD_Display_Update_6
-	Set_Cursor(1,1)
-	Send_Constant_String(#String_state5)
-	ljmp LCD_Display_Update_done
+    cjne a, #5, LCD_Display_Update_6
+    Set_Cursor(1,1)
+    Send_Constant_String(#String_state5)
+    ljmp LCD_Display_Update_done
 
 LCD_Display_Update_6:
-	cjne a, #6, LCD_Display_Update_7
-	Set_Cursor(1,1)
-	Send_Constant_String(#String_state6)
-	ljmp LCD_Display_Update_done
+    cjne a, #6, LCD_Display_Update_7
+    Set_Cursor(1,1)
+    Send_Constant_String(#String_state6)
+    ljmp LCD_Display_Update_done
 
 LCD_Display_Update_7:
-	cjne a, #7, LCD_Display_Update_done
-	Set_Cursor(1,1)
-	Send_Constant_String(#String_state7)
-	ljmp LCD_Display_Update_done
+    cjne a, #7, LCD_Display_Update_done
+    Set_Cursor(1,1)
+    Send_Constant_String(#String_state7)
+    ljmp LCD_Display_Update_done
 
 LCD_Display_Update_done:
-	pop acc
-	ret
+    pop acc
+    ret
 
 LCD_Display_Update_Temp:
-	
+    
 ;---------------------------------------------------------
 
 KEY1_DEB:
 ;non-blocking state machine for KEY1 debounce
-	mov a, KEY1_DEB_state
+    mov a, KEY1_DEB_state
 KEY1_DEB_state0:
-	cjne a, #0, KEY1_DEB_state1
-	jb KEY.1, KEY1_DEB_done
-	mov KEY1_DEB_timer, #0
-	inc KEY1_DEB_state
-	sjmp KEY1_DEB_done
+    cjne a, #0, KEY1_DEB_state1
+    jb KEY.1, KEY1_DEB_done
+    mov KEY1_DEB_timer, #0
+    inc KEY1_DEB_state
+    sjmp KEY1_DEB_done
 KEY1_DEB_state1:
-	cjne a, #1, KEY1_DEB_state2
-	; this is the debounce state
-	mov a, KEY1_DEB_timer
-	cjne a, #50, KEY1_DEB_done ; 50 ms passed?
-	inc KEY1_DEB_state
-	sjmp KEY1_DEB_done	
+    cjne a, #1, KEY1_DEB_state2
+    ; this is the debounce state
+    mov a, KEY1_DEB_timer
+    cjne a, #50, KEY1_DEB_done ; 50 ms passed?
+    inc KEY1_DEB_state
+    sjmp KEY1_DEB_done  
 KEY1_DEB_state2:
-	cjne a, #2, KEY1_DEB_state3
-	jb KEY.1, KEY1_DEB_state2b
-	inc KEY1_DEB_state
-	sjmp KEY1_DEB_done	
+    cjne a, #2, KEY1_DEB_state3
+    jb KEY.1, KEY1_DEB_state2b
+    inc KEY1_DEB_state
+    sjmp KEY1_DEB_done  
 KEY1_DEB_state2b:
-	mov KEY1_DEB_state, #0
-	sjmp KEY1_DEB_done
+    mov KEY1_DEB_state, #0
+    sjmp KEY1_DEB_done
 KEY1_DEB_state3:
-	cjne a, #3, KEY1_DEB_done
-	jnb KEY.1, KEY1_DEB_done
-	setb Key1_flag ; Suscesfully detected a valid KEY1 press/release
-	mov KEY1_DEB_state, #0	
+    cjne a, #3, KEY1_DEB_done
+    jnb KEY.1, KEY1_DEB_done
+    setb Key1_flag ; Suscesfully detected a valid KEY1 press/release
+    mov KEY1_DEB_state, #0  
 KEY1_DEB_done:
-	ret
+    ret
 
 ; ------------------------------------------------------------------------------
 ; Non-blocking FSM for the one second counter
 ;-------------------------------------------------------------------------------
 SEC_FSM:
-	mov a, SEC_FSM_state
+    mov a, SEC_FSM_state
 SEC_FSM_state0:
-	cjne a, #0, SEC_FSM_state1
-	mov a, SEC_FSM_timer
-	cjne a, #250, SEC_FSM_done ; 250 ms passed?
-	mov SEC_FSM_timer, #0
-	inc SEC_FSM_state
-	sjmp SEC_FSM_done
-SEC_FSM_state1:	
-	cjne a, #1, SEC_FSM_state2
-	setb LEDRA.1
-	mov a, SEC_FSM_timer
-	cjne a, #250, SEC_FSM_done ; 250 ms passed?
-	mov SEC_FSM_timer, #0
-	inc SEC_FSM_state
-	sjmp SEC_FSM_done
-SEC_FSM_state2:	
-	cjne a, #2, SEC_FSM_state3
-	setb LEDRA.2
-	mov a, SEC_FSM_timer
-	cjne a, #250, SEC_FSM_done ; 250 ms passed?
-	mov SEC_FSM_timer, #0
-	inc SEC_FSM_state
-	sjmp SEC_FSM_done
-SEC_FSM_state3:	
-	cjne a, #3, SEC_FSM_done
-	setb LEDRA.3
-	mov a, SEC_FSM_timer
-	cjne a, #250, SEC_FSM_done ; 250 ms passed?
-	mov SEC_FSM_timer, #0
-	mov SEC_FSM_state, #0
-	mov a, current_time_sec
-	cjne a, #59, IncCurrentTimeSec ; Don't let the seconds counter pass 59
-	mov current_time_sec, #0
-	sjmp SEC_FSM_done
+    cjne a, #0, SEC_FSM_state1
+    mov a, SEC_FSM_timer
+    cjne a, #250, SEC_FSM_done ; 250 ms passed?
+    mov SEC_FSM_timer, #0
+    inc SEC_FSM_state
+    sjmp SEC_FSM_done
+SEC_FSM_state1: 
+    cjne a, #1, SEC_FSM_state2
+    setb LEDRA.1
+    mov a, SEC_FSM_timer
+    cjne a, #250, SEC_FSM_done ; 250 ms passed?
+    mov SEC_FSM_timer, #0
+    inc SEC_FSM_state
+    sjmp SEC_FSM_done
+SEC_FSM_state2: 
+    cjne a, #2, SEC_FSM_state3
+    setb LEDRA.2
+    mov a, SEC_FSM_timer
+    cjne a, #250, SEC_FSM_done ; 250 ms passed?
+    mov SEC_FSM_timer, #0
+    inc SEC_FSM_state
+    sjmp SEC_FSM_done
+SEC_FSM_state3: 
+    cjne a, #3, SEC_FSM_done
+    setb LEDRA.3
+    mov a, SEC_FSM_timer
+    cjne a, #250, SEC_FSM_done ; 250 ms passed?
+    mov SEC_FSM_timer, #0
+    mov SEC_FSM_state, #0
+    mov a, current_time_sec
+    cjne a, #59, IncCurrentTimeSec ; Don't let the seconds counter pass 59
+    mov current_time_sec, #0
+    sjmp SEC_FSM_done
 IncCurrentTimeSec:
-	inc current_time_sec
-	cpl LEDRA.0 ; 1 Hz heartbeat LED
+    inc current_time_sec
+    cpl LEDRA.0 ; 1 Hz heartbeat LED
 SEC_FSM_done:
-	ret
+    ret
 
 ;-------------------------------------------------------------------------------
 ; PWM
@@ -503,95 +521,74 @@ SEC_FSM_done:
 ; clarity for the pwm signal; input parameter: power_output; used buffers: x, y
 ; ------------------------------------------------------------------------------
 PWM_Wave: ; call pwm generator when 1 ms flag is triggered
-	jbc one_ms_pwm_flag, pwm_wave_generator
-	sjmp end_pwm_generator
+    jbc one_ms_pwm_flag, pwm_wave_generator
+    sjmp end_pwm_generator
 
 pwm_wave_generator:
-	clr mf
-	; move pwm counter value into x for comparison purpose
-	mov x, pwm_counter
-	mov x+1, pwm_counter+1
-	mov x+2, pwm_counter+2
-	mov x+3, pwm_counter+3
+    clr mf
+    ; move pwm counter value into x for comparison purpose
+    mov x, pwm_counter
+    mov x+1, pwm_counter+1
+    mov x+2, pwm_counter+2
+    mov x+3, pwm_counter+3
 
-	Load_Y(PWM_PERIOD)
+    Load_Y(PWM_PERIOD)
 
-	; compare x(pwm_counter) and y(1499) if x=y, wrap x back to 0; else 
-	; increase x by 1
-	lcall x_eq_y 
-	jb mf, wrap_pwm_counter
-	; x not equal 1499, increment by 1
-	Load_Y(1)
-	lcall add32
-	; update pwm_counter
-	mov pwm_counter, x
-	mov pwm_counter+1, x+1
-	mov pwm_counter+2, x+2
-	mov pwm_counter+3, x+3
-	sjmp set_pwm
+    ; compare x(pwm_counter) and y(1499) if x=y, wrap x back to 0; else 
+    ; increase x by 1
+    lcall x_eq_y 
+    jb mf, wrap_pwm_counter
+    ; x not equal 1499, increment by 1
+    Load_Y(1)
+    lcall add32
+    ; update pwm_counter
+    mov pwm_counter, x
+    mov pwm_counter+1, x+1
+    mov pwm_counter+2, x+2
+    mov pwm_counter+3, x+3
+    sjmp set_pwm
 
 wrap_pwm_counter:
-	; x equal 1499, wrap to 0
-	Load_X(0)
-	mov pwm_counter, x
-	mov pwm_counter+1, x+1
-	mov pwm_counter+2, x+2
-	mov pwm_counter+3, x+3
+    ; x equal 1499, wrap to 0
+    Load_X(0)
+    mov pwm_counter, x
+    mov pwm_counter+1, x+1
+    mov pwm_counter+2, x+2
+    mov pwm_counter+3, x+3
 
 set_pwm:
-	; compare with power_output, if pwm counter smaller than power_output, 
-	; set pwm pin high; else set pwm pin low load y with power output value
-	mov y, power_output
-	mov y+1, power_output+1
-	mov y+2, power_output+2
-	mov y+3, power_output+3
+    ; compare with power_output, if pwm counter smaller than power_output, 
+    ; set pwm pin high; else set pwm pin low load y with power output value
+    mov y, power_output
+    mov y+1, power_output+1
+    mov y+2, power_output+2
+    mov y+3, power_output+3
 
-	; compare x(pwm counter) with y(power output)
-	lcall x_lt_y
-	jb mf, set_pwm_high ; set pwm pin high if pwm counter smaller than power 
-	;output set pwm pin low if pwm counter greater than power output
-	clr PWM_OUT
-	clr LEDRA.4
-	sjmp end_pwm_generator
+    ; compare x(pwm counter) with y(power output)
+    lcall x_lt_y
+    jb mf, set_pwm_high ; set pwm pin high if pwm counter smaller than power 
+    ;output set pwm pin low if pwm counter greater than power output
+    clr PWM_OUT
+    clr LEDRA.4
+    sjmp end_pwm_generator
 
 set_pwm_high:
-	setb PWM_OUT
-	setb LEDRA.4
+    setb PWM_OUT
+    setb LEDRA.4
 
 end_pwm_generator:
-	ret
+    ret
 
 ;-------------------------------------------------------------------------------;
 ; Temp_Compare
-;
-; PURPOSE:
-;   Compare the current measured temperature against
-;   the soak and reflow temperature setpoints.
-;
-; BEHAVIOR:
-;   - If current_temp >= soak_temp   if soak_temp_reached   = 1
-;   - If current_temp >= reflow_temp if reflow_temp_reached = 1
-;
-; NOTES:
-;   - Uses 32-bit UNSIGNED comparison from math32.asm
-;   - Comparison is done by:
-;       x < y ?   (mf = 1)  if NOT reached
-;       x >= y ?  (mf = 0)  if reached
-;   - This routine ONLY SETS flags.
-;     Clearing flags must be handled by the FSM.
-;
-; EXPECTED VARIABLES (DSEG / BSEG):
-;   current_temp[4], soak_temp[4], reflow_temp[4]
-;   x[4], y[4]
-;   mf (math32 compare flag)
-;   soak_temp_reached, reflow_temp_reached
+; Checks if we have reached the user's target temperatures.
+; Sets 'soak_temp_reached' if current_temp >= soak_temp
+; Sets 'reflow_temp_reached' if current_temp >= reflow_temp
 ;-------------------------------------------------------------------------------;
 Temp_Compare:
-
-    ; --- ADD THESE 2 LINES ---
+    ; Reset flags initially
     clr soak_temp_reached
     clr reflow_temp_reached
-    ; -------------------------
 
     push acc
     push psw
@@ -599,47 +596,49 @@ Temp_Compare:
     push AR1
     push AR2
     
-; Check: current_temp >= soak_temp ?
-    ; Copy current_temp of x (math32 operand A)
-    mov  R0, #current_temp
-    mov  R1, #x
+    ; --- 1. CHECK SOAK TEMP ---
+    ; Copy current_temp to X
+    mov R0, #current_temp
+    mov R1, #x
     lcall Copy4_Bytes_R0_to_R1
 
-    ; Copy soak_temp of y (math32 operand B)
-    mov  R0, #soak_temp
-    mov  R1, #y
+    ; Copy soak_temp to Y
+    mov R0, #soak_temp
+    mov R1, #y
     lcall Copy4_Bytes_R0_to_R1
 
-    ; Perform x < y comparison
-    ; mf = 1 if current_temp < soak_temp  (NOT reached)
-    ; mf = 0 if current_temp >= soak_temp (REACHED)
+    ; Compare: Is X (Current) < Y (Target)?
     lcall x_lt_y
-    jb   mf, Temp_Soak_NotReached
+    jb mf, Check_Reflow_Threshold ; If Current < Target, jump (Flag stays 0)
+    
+    ; If we are here, Current >= Target
     setb soak_temp_reached
 
-; Check: current_temp >= reflow_temp ?
-Temp_Soak_NotReached:
-    ; Copy current_temp of x
-    mov  R0, #current_temp
-    mov  R1, #x
+Check_Reflow_Threshold:
+    ; --- 2. CHECK REFLOW TEMP ---
+    ; Copy current_temp to X (Need to reload X because math32 destroys it)
+    mov R0, #current_temp
+    mov R1, #x
     lcall Copy4_Bytes_R0_to_R1
 
-    ; Copy reflow_temp of y
-    mov  R0, #reflow_temp
-    mov  R1, #y
+    ; Copy reflow_temp to Y
+    mov R0, #reflow_temp
+    mov R1, #y
     lcall Copy4_Bytes_R0_to_R1
 
-    ; Compare x < y again
+    ; Compare
     lcall x_lt_y
-    jb   mf, Temp_Reflow_NotReached
+    jb mf, Temp_Compare_Done
+    
+    ; If Current >= Target
     setb reflow_temp_reached
 
-Temp_Reflow_NotReached:
-    pop  AR2
-    pop  AR1
-    pop  AR0
-    pop  psw
-    pop  acc
+Temp_Compare_Done:
+    pop AR2
+    pop AR1
+    pop AR0
+    pop psw
+    pop acc
     ret
 ;-------------------------------------------------------------------------------;
 ; Time_Compare
@@ -649,7 +648,7 @@ Temp_Reflow_NotReached:
 ;   time limits.
 ;
 ; BEHAVIOR:
-;   - If current_time >= soak_time   if soak_time_reached   = 1
+;   - If current_time >= soak_time   if soak_time_reached    = 1
 ;   - If current_time >= reflow_time if reflow_time_reached = 1
 ;
 ; NOTES:
@@ -806,116 +805,175 @@ Safety_TC_Done:
 ;-------------------------------------------------------------------------------;
 ; Main Control FSM for the entire process
 ;-------------------------------------------------------------------------------;
+;-------------------------------------------------------------------------------;
+; FSM LOGIC (Button Logic Fixed)
+;-------------------------------------------------------------------------------;
 Control_FSM:
-	mov a, Control_FSM_state
-	sjmp Control_FSM_state0
+    mov a, Control_FSM_state
+    sjmp Control_FSM_state0
 
 Control_FSM_state0_a:
-	mov Control_FSM_state, #0
-	setb state_change_signal
-	
+    mov Control_FSM_state, #0
+    setb state_change_signal
+    
 Control_FSM_state0:
     cjne a, #0, Control_FSM_state1
-    jb P1.0, Control_FSM_done_bridge
-    lcall Wait_For_P1_0_Release
+    jb P1.0, Control_FSM_done_bridge ; If Button High (Not Pressed), Exit
+    lcall Wait_For_P1_0_Release      ; If Low (Pressed), Wait & Proceed
     sjmp Control_FSM_state1_a  
     
-   
-; BRIDGE: Local exit to help shorter jumps reach the end
 Control_FSM_done_bridge:
     ret
 
 Control_FSM_state1_a:
-	inc Control_FSM_state
-	
-	mov Current_State, #0
-	lcall Update_Screen_Full 
-	
-	setb state_change_signal
-	
-	mov a, Control_FSM_state
-	
+    inc Control_FSM_state
+    mov Current_State, #0
+    lcall Update_Screen_Full 
+    setb state_change_signal
+    mov a, Control_FSM_state
+    
 Control_FSM_state1:
     cjne a, #1, Control_FSM_state2
-    ; --- ENABLE USER INPUT ---
     lcall Check_Buttons 
     lcall Check_Keypad
-    ; ----------------------------
     
-    ; FIX: Check P1.0. If Low (0/Pressed), jump to 1_b
-    jnb P1.0, Control_FSM_state1_b
-    ret ; Exit if button not pressed
+    ; FIX: Check if Button is HIGH (Not Pressed). If so, exit.
+    jb P1.0, Control_FSM_state1_ret
+    
+    ; If we get here, Button is LOW (Pressed)
+    lcall Wait_For_P1_0_Release
+    lcall Update_FSM_Variables
+    sjmp Control_FSM_state2_a
+Control_FSM_state1_ret:
+    ret
 
-Control_FSM_state1_b:
-    lcall Wait_For_P1_0_Release  ; Wait for finger to leave
-    lcall Update_FSM_Variables   ; Save the numbers
-    sjmp Control_FSM_state2_a    ; GO!
-
+; --- STATE 2: RAMP TO SOAK ---
 Control_FSM_state2_a:
-	inc Control_FSM_state
-	setb state_change_signal
+    inc Control_FSM_state
+    setb state_change_signal
 Control_FSM_state2:
-	cjne a, #2, Control_FSM_state3
-	jbc PB2_flag, Control_FSM_state6_a
-	jbc soak_temp_reached, Control_FSM_state3_a
-	ret
+    cjne a, #2, Control_FSM_state3
+    jnb PB2_flag, State2_Check
+    clr PB2_flag
+    ljmp Control_FSM_state6_a ; Pause
+State2_Check:
+    jnb soak_temp_reached, State2_Ret
+    clr soak_temp_reached
+    inc Control_FSM_state
+    setb state_change_signal
+    mov current_time_sec, #0
+State2_Ret:
+    ret
 
-Control_FSM_state3_a:
-	inc Control_FSM_state
-	setb state_change_signal
+; --- STATE 3: SOAK PHASE ---
 Control_FSM_state3:
-	cjne a, #3, Control_FSM_state4
-	jbc PB2_flag, Control_FSM_state6_a
-	jbc soak_time_reached, Control_FSM_state4_a
-	ret
+    cjne a, #3, Control_FSM_state4
+    jnb PB2_flag, State3_Check
+    clr PB2_flag
+    ljmp Control_FSM_state6_a
+State3_Check:
+    jnb soak_time_reached, State3_Ret
+    clr soak_time_reached
+    inc Control_FSM_state      
+    setb state_change_signal 
+State3_Ret:
+    ret
 
-Control_FSM_state4_a:
-	inc Control_FSM_state	
-	setb state_change_signal
+; --- STATE 4: RAMP TO PEAK ---
 Control_FSM_state4:
-	cjne a, #4, Control_FSM_state5
-	jbc PB2_flag, Control_FSM_state6_a
-	jbc reflow_temp_reached, Control_FSM_state5_a
-	ret
+    cjne a, #4, Control_FSM_state5
+    jnb PB2_flag, State4_Check
+    clr PB2_flag
+    ljmp Control_FSM_state6_a
+State4_Check:
+    jnb reflow_temp_reached, State4_Ret
+    clr reflow_temp_reached
+    inc Control_FSM_state
+    setb state_change_signal
+    mov current_time_sec, #0
+State4_Ret:
+    ret
 
-Control_FSM_state5_a:
-	inc Control_FSM_state
-	setb state_change_signal
+; --- STATE 5: REFLOW PHASE ---
 Control_FSM_state5:
-	cjne a, #5, Control_FSM_state6
-	jbc PB2_flag, Control_FSM_state6_a
-	jbc reflow_time_reached, Control_FSM_state6_a
-	ret
+    cjne a, #5, Control_FSM_state6_trampoline
+    sjmp State5_Logic
+Control_FSM_state6_trampoline:
+    ljmp Control_FSM_state6
 
+State5_Logic:
+    jnb PB2_flag, State5_Check
+    clr PB2_flag
+    ljmp Control_FSM_state6_a
+State5_Check:
+    jnb reflow_time_reached, State5_Ret
+    clr reflow_time_reached
+    ljmp Control_FSM_state6_a
+State5_Ret:
+    ret
+
+; --- STATE 6: COOLING ---
 Control_FSM_state6_a:
-	inc Control_FSM_state
-	setb state_change_signal
+    inc Control_FSM_state
+    setb state_change_signal
 Control_FSM_state6:
-	cjne a, #6, Control_FSM_done
-	jbc cooling_temp_reached, Control_FSM_state7_a
-	ret
+    cjne a, #6, Control_FSM_state7
+    ; Wait for Cooling Temp Reached
+    jnb cooling_temp_reached, State6_Ret
+    clr cooling_temp_reached
+    inc Control_FSM_state
+    setb state_change_signal
+State6_Ret:
+    ret
 
-Control_FSM_state7_a:
-	inc Control_FSM_state
-	setb state_change_signal
+; --- STATE 7: DONE ---
 Control_FSM_state7:
-	cjne a, #7, Control_FSM_done
-	jbc PB0_flag, Control_FSM_state0_a
-	ret
+    cjne a, #7, Control_FSM_done
+    
+    ; FIX: Check if Button is HIGH (Not Pressed). If so, exit.
+    jb PB0_flag, Control_FSM_Reset_Logic ; Wait, PB0_flag is software flag?
+    
+    ; Let's assume you meant the physical button P1.0 like State 0
+    jb P1.0, Control_FSM_done
+    
+    lcall Wait_For_P1_0_Release
+    ljmp Control_FSM_state0_a
+
+Control_FSM_Reset_Logic:
+    ; If using PB0_flag from ISR, handle here
+    clr PB0_flag
+    ljmp Control_FSM_state0_a
 
 Control_FSM_done:
-	ret
+    ret
 ;-------------------------------------------------------------------------------;
 ;         Main program.          
 ;-------------------------------------------------------------------------------;
 main:
-	; Initialization
-    mov SP, #0xC0 
 
-; --- PORT CONFIGURATION (Changed bc old config. didn't have correct button inputs) ---
-    ; P0: Odd=LCD(Out), Even=Buttons(In) 
-    ; Binary: 10101010 -> Hex: 0xAA
-    mov P0MOD, #0xAA 
+    ; --------------------------------------------------------
+    ; 1. SAFETY SHUTDOWN
+    ; --------------------------------------------------------
+    clr EA              ; FORCE Interrupts OFF immediately
+    mov SP, #0xC0       ; Reset Stack Pointer to safe location
+    
+    ; --------------------------------------------------------
+    ; 2. THE "DIRTY DELAY" (Fixes Reset Garbage)
+    ; We burn ~100ms here using a raw loop. 
+    ; We cannot use timers yet because they aren't initialized.
+    ; --------------------------------------------------------
+    mov R0, #250
+Reset_Delay_Outer:
+    mov R1, #255
+Reset_Delay_Inner:
+    djnz R1, Reset_Delay_Inner
+    djnz R0, Reset_Delay_Outer
+    ; --------------------------------------------------------
+
+    ; ... NOW continue with your normal Port Configuration ...
+    
+    ; --- PORT CONFIGURATION ---
+    mov P0MOD, #0xAA
 
     ; P1: Mixed usage 
     ; P1.7(LCD_RS), P1.6(Row3), P1.5(Sound), P1.4(Row2)
@@ -936,95 +994,101 @@ main:
     mov LEDRA, #0 ; LEDRA is bit addressable
     mov LEDRB, #0 ; LEDRB is NOT bit addresable
 
-	; Enable Global interrupts
+    ; Enable Global interrupts
     setb EA  
 
-	; FSM initial states
-	mov KEY1_DEB_state, #0
-	mov SEC_FSM_state, #0
-	mov Control_FSM_state, #0
-	mov Current_State, #0
-	
-	; FSM timers initialization
-	mov KEY1_DEB_timer, #0
-	mov SEC_FSM_timer, #0
-	; time counters initialization
-	mov current_time_sec, #0
-	mov current_time_minute, #0
-	; Initialize counter to zero
+    ; FSM initial states
+    mov KEY1_DEB_state, #0
+    mov SEC_FSM_state, #0
+    mov Control_FSM_state, #0
+    mov Current_State, #0
+    
+    ; FSM timers initialization
+    mov KEY1_DEB_timer, #0
+    mov SEC_FSM_timer, #0
+    ; time counters initialization
+    mov current_time_sec, #0
+    mov current_time_minute, #0
+    ; Initialize counter to zero
     mov pwm_counter, #0
-	mov pwm_counter+1, #0
-	mov pwm_counter+2, #0
-	mov pwm_counter+3, #0
-	; Initialize power output
-	mov power_output+3, #0
-	mov power_output+2, #0
-	mov power_output+1, #02H
-	mov power_output, #0EEH ; (initilize to 750 for testing)
+    mov pwm_counter+1, #0
+    mov pwm_counter+2, #0
+    mov pwm_counter+3, #0
+    ; Initialize power output
+    mov power_output+3, #0
+    mov power_output+2, #0
+    mov power_output+1, #02H
+    mov power_output, #0EEH ; (initilize to 750 for testing)
 
-	; Clear all the flags
-	clr  tc_missing_abort
-	clr  stop_signal
-	clr PB0_flag
-	clr PB1_flag
-	clr PB2_flag
-	clr one_second_flag
-	clr config_finish_signal
-	clr soak_temp_reached
-	clr soak_time_reached
-	clr reflow_temp_reached
-	clr reflow_time_reached
-	clr cooling_temp_reached
-	clr state_change_signal
-	
-	setb state_change_signal
+    ; Clear all the flags
+    clr  tc_missing_abort
+    clr  stop_signal
+    clr PB0_flag
+    clr PB1_flag
+    clr PB2_flag
+    clr one_second_flag
+    clr config_finish_signal
+    clr soak_temp_reached
+    clr soak_time_reached
+    clr reflow_temp_reached
+    clr reflow_time_reached
+    clr cooling_temp_reached
+    clr state_change_signal
+    
+    setb state_change_signal
 
-	; Set bit
-	setb tc_startup_window
+    ; Set bit
+    setb tc_startup_window
 
-	lcall Timer0_Init
+    lcall Timer0_Init
     lcall Timer2_Init
-	lcall ELCD_4BIT
-	;----- Two new lines I added to initialize the UI
-	lcall Init_All_Buffers
+    lcall ELCD_4BIT
+    ;----- Two new lines I added to initialize the UI
+    lcall Init_All_Buffers
     lcall Update_Screen_Full
-	;-----
-	lcall Initialize_Serial_Port
+    ;-----
+    lcall Initialize_Serial_Port
 ;-------------------------------------------------------------------------------;
 ; while(1) loop
 ;-------------------------------------------------------------------------------;
 loop:
-	; Check the FSM for KEY1 debounce
-	lcall KEY1_DEB
-	
-	; Added to take temp readings
-	lcall Read_Thermocouple
-	
-	; 1. Check if we reached temp (Observer)
-	lcall Temp_Compare
-	
-	; 2. Decide heater power based on flags (Driver)
-	lcall Power_Control
-	
-	lcall Time_Compare
+    ; Check the FSM for KEY1 debounce
+    lcall KEY1_DEB
     
-	lcall Safety_Check_TC
+    ; Added to take temp readings
+    lcall Read_Thermocouple
+    
+    ; 1. Check if we reached temp (Observer)
+    lcall Temp_Compare
+    
+    ; 2. Decide heater power based on flags (Driver)
+    lcall Power_Control
+    
+    ; 3. Update 32-bit Time Variable for Comparison
+    mov current_time+0, current_time_sec
+    mov current_time+1, #0
+    mov current_time+2, #0
+    mov current_time+3, #0
+    
+    lcall Time_Compare
+    
+    lcall Safety_Check_TC
 
 
-	; Check the FSM for one second counter
-	lcall SEC_FSM
+    ; Check the FSM for one second counter
+    lcall SEC_FSM
 
-	; Check the FSM for the overall control flow of the reflow process
-	lcall Control_FSM
+    ; Check the FSM for the overall control flow of the reflow process
+    lcall Control_FSM
 
-	; Update the LCD display based on the current state
-	lcall LCD_Display_Update_func
+    ; Update the LCD display based on the current state
+    lcall LCD_Display_Update_func
 
-	; Update the pwm output for the ssr
-	lcall PWM_Wave 
+    ; Update the pwm output for the ssr
+    lcall PWM_Wave 
 
-	; After initialization the program stays in this 'forever' loop
-	ljmp loop
+    ; After initialization the program stays in this 'forever' loop
+    ljmp loop
 ;-------------------------------------------------------------------------------;
 
 ; ================================================================
@@ -1149,25 +1213,25 @@ Check_Buttons:
     ret
 
 Btn_Soak_Temp_Press:
-    lcall Wait_25ms
+    lcall Wait_25ms_BLOCKING
     mov Current_State, #1
     mov Cursor_Idx, #0
     sjmp Redraw_Screen
 
 Btn_Soak_Time_Press:
-    lcall Wait_25ms
+    lcall Wait_25ms_BLOCKING
     mov Current_State, #2
     mov Cursor_Idx, #0
     sjmp Redraw_Screen
 
 Btn_Refl_Temp_Press:
-    lcall Wait_25ms
+    lcall Wait_25ms_BLOCKING
     mov Current_State, #3
     mov Cursor_Idx, #0
     sjmp Redraw_Screen
 
 Btn_Refl_Time_Press:
-    lcall Wait_25ms
+    lcall Wait_25ms_BLOCKING 
     mov Current_State, #4
     mov Cursor_Idx, #0
     sjmp Redraw_Screen
@@ -1276,7 +1340,7 @@ Keypad_Scan:
     ret
 
 Keypad_Debounce:
-    lcall Wait_25ms
+    lcall Wait_25ms_BLOCKING
     mov C, COL1
     anl C, COL2
     anl C, COL3
@@ -1373,12 +1437,27 @@ Wait_Release:
     ret
 
 Wait_25ms:
-    mov R0, #15
-W25_L3: mov R1, #74
-W25_L2: mov R2, #250
-W25_L1: djnz R2, W25_L1
-    djnz R1, W25_L2
-    djnz R0, W25_L3
+    ; 1. Check if we are already waiting
+    jb wait25_active, Check_Timer_Status
+    
+    ; 2. Check if we just finished
+    jnb wait25_done, Start_New_Timer
+    
+    ; 3. Timer is DONE! Reset flags and return True
+    clr wait25_done
+    setb C          ; Carry = 1 means "Done"
+    ret
+
+Start_New_Timer:
+    ; 4. Start a new 25ms wait
+    mov wait25_count, #0
+    setb wait25_active
+    clr C           ; Carry = 0 means "Not Done Yet"
+    ret
+
+Check_Timer_Status:
+    ; 5. Still waiting... return False immediately
+    clr C           ; Carry = 0 means "Not Done Yet"
     ret
 
 ; ----------------------------------------------------------------
@@ -1543,11 +1622,17 @@ Print_String_RAM:
 Print_String_Done:
     ret
 
+; Blocking wrapper for LCD clear (keeps old behavior just for this)
+Wait_25ms_BLOCKING:
+    lcall Wait_25ms
+    jnc Wait_25ms_BLOCKING ; Keep jumping back until Done (C=1)
+    ret
+
 Clear_Screen_Func:
     mov A, #0x01
     lcall ?WriteCommand
-    mov R2, #10
-    lcall Wait_25ms
+    ; Use the blocking version here
+    lcall Wait_25ms_BLOCKING 
     mov A, #0x0F
     lcall ?WriteCommand
     ret
@@ -1576,48 +1661,48 @@ Wait_For_P1_0_Release:
     
     
 ; ================================================================
-; MODULE: THERMOCOUPLE ADC DRIVER (5V REFERENCE)
+; MODULE: THERMOCOUPLE ADC DRIVER (Non-Blocking)
 ; ================================================================
 Read_Thermocouple:
-    ; 1. Initialize ADC & Delay
-    mov ADC_C, #0x80    ; Reset ADC
-    lcall Wait_25ms     ; Reuse existing wait to let signals settle
-
-    ; 2. Read Channel 0 (AIN0)
-    mov ADC_C, #0x00    ; <--- Select Channel 0
+    ; 1. Initialize ADC (Only once)
+    ; We need a state variable to know if we are waiting or starting
+    ; For simplicity in this loop, we will just use the Wait function's status.
     
-    ; 3. Get the Raw Count (0 to 4095)
+    lcall Wait_25ms
+    jnc Read_TC_Exit ; If Not Done (C=0), exit immediately!
+
+    ; --- 25ms IS DONE! NOW READ ---
+    
+    ; Reset ADC (Start conversion logic)
+    mov ADC_C, #0x80    ; Reset ADC
+    mov ADC_C, #0x00    ; Select Channel 0
+    
+    ; Get Raw Count (0 to 4095)
     mov x+0, ADC_L
     mov x+1, ADC_H
     mov x+2, #0
     mov x+3, #0
     
-    ; 4. Math: Convert Count to Voltage (mV)
-    ; Formula: mV = (ADC_Count * 5000) / 4095
-    ; (Because Max Count 4095 = 5000 mV)
-    
+    ; Convert Count to Voltage (mV)
     Load_y(5000)        ; Load 5000 mV
     lcall mul32         ; x = Count * 5000
     
     Load_y(4095)        ; Load Max resolution
-    lcall div32         ; x = Voltage in mV (e.g. 2500 = 2.5V)
-
-    ; 5. Math: Convert Voltage to Temperature
-    ; --- CHECK YOUR OP-AMP GAIN HERE ---
-    ; If 1 degree C = 10mV output: Divide by 10.
-    ; If 1 degree C = 5mV output (AD8495): Divide by 5.
+    lcall div32         ; x = Voltage in mV
     
+    ; Convert Voltage to Temperature (Gain = 10mV/C)
     Load_y(10)          
     lcall div32
     
-    ; 6. Store Result
+    ; Store Result
     mov current_temp+0, x+0
     mov current_temp+1, x+1
     mov current_temp+2, x+2
     mov current_temp+3, x+3
-    
+
+Read_TC_Exit:
     ret
-    
+
 ; ================================================================
 ; MODULE: POWER CONTROLLER (The Brain)
 ; ================================================================
@@ -1632,38 +1717,47 @@ Power_Control:
 
     ; --- State 2: RAMP TO SOAK ---
     cjne a, #2, PC_Check_Soak
-    ; We are ramping. We haven't reached temp yet (or FSM would have moved).
-    ; FULL POWER!
+    ; Mode: Full Speed Ahead
     sjmp Set_Max_Power
 
 PC_Check_Soak:
     ; --- State 3: SOAK PHASE ---
     cjne a, #3, PC_Check_Ramp_Reflow
-    ; Bang-Bang Control:
-    ; If Flag=1 (Hot enough), Power=0 (Default).
-    ; If Flag=0 (Too cold), Power=100%.
-    jb soak_temp_reached, PC_Done
-    sjmp Set_Max_Power
+    ; Mode: Maintenance (Low Power)
+    ; If Temp > Target, OFF. If Temp < Target, 20% Power.
+    jb soak_temp_reached, PC_Done ; If hot enough, stay OFF
+    sjmp Set_20_Percent_Power     ; If cold, use 20%
 
 PC_Check_Ramp_Reflow:
     ; --- State 4: RAMP TO REFLOW ---
     cjne a, #4, PC_Check_Reflow
+    ; Mode: Full Speed Ahead
     sjmp Set_Max_Power
 
 PC_Check_Reflow:
     ; --- State 5: REFLOW PHASE ---
     cjne a, #5, PC_Done
+    ; Mode: Maintenance (Low Power)
     jb reflow_temp_reached, PC_Done
-    sjmp Set_Max_Power
+    sjmp Set_20_Percent_Power
 
 PC_Done:
     ret
 
-; --- Helper to set 100% Power ---
+; --- Power Helpers ---
+
 Set_Max_Power:
-    ; Load 1000 (0x03E8) into power_output
-    mov power_output+0, #0xE8
-    mov power_output+1, #0x03
+    ; Load 1500 (0x05DC) = 100% Duty Cycle
+    mov power_output+0, #0xDC
+    mov power_output+1, #0x05
+    mov power_output+2, #0
+    mov power_output+3, #0
+    ret
+
+Set_20_Percent_Power:
+    ; Load 300 (0x012C) = 20% Duty Cycle
+    mov power_output+0, #0x2C
+    mov power_output+1, #0x01
     mov power_output+2, #0
     mov power_output+3, #0
     ret
