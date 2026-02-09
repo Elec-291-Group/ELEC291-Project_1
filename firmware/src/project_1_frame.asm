@@ -61,7 +61,14 @@ KEY1_DEB_timer: ds 1
 SEC_FSM_timer:  ds 1
 KEY1_DEB_state:    ds 1
 SEC_FSM_state: 	   ds 1
+<<<<<<< HEAD
 Control_FSM_state: ds 1
+=======
+Control_FSM_state: ds 1 
+
+servo_pwm_counter: ds 1 ; counter for the servo pwm signal
+; 46d bytes used
+>>>>>>> main
 
 proportional_gain_var: ds 4
 
@@ -74,6 +81,8 @@ bseg
 mf:		dbit 1 ; math32 sign
 one_second_flag: dbit 1
 one_ms_pwm_flag: dbit 1 ; one_millisecond_flag for pwm signal
+
+one_millisecond_flag_servo: dbit 1 ; one_millisecond_flag for servo motor control
 
 soak_temp_reached: dbit 1
 reflow_temp_reached: dbit 1
@@ -93,6 +102,15 @@ Key1_flag: dbit 1
 PB0_flag: dbit 1 ; start entire program
 PB1_flag: dbit 1 ; start soak
 PB2_flag: dbit 1 ; pause process
+<<<<<<< HEAD
+=======
+
+servo_angle_zero: dbit 1 ; flag for indicating whether the servo angle should be at 0 or not: 1 -> 0; 0 -> 180
+; 0 degree as oven door open
+; 180 degree as oven door close
+
+; 11 bits used
+>>>>>>> main
 
 soak_temp_greater: dbit 1 ; target soak_temp greater than current_temp
 ; 11 bits used
@@ -113,15 +131,23 @@ TIMER2_RELOAD  EQU ((65536-(CLK/(12*TIMER2_RATE))))
 
 PWM_PERIOD     EQU 1499 ; 1.5s period
 
+SERVO_OUT      EQU P1.4 ; x.x modify here to change pwm pin
+
 SOUND_OUT      EQU P1.5 ; Pin connected to the speaker
 
 PWM_OUT		   EQU P1.3 ; Pin connected to the ssr for outputing pwm signal
 
+<<<<<<< HEAD
 MAX_POWER	   EQU 1500 ; max oven power
 NO_POWER	   EQU 0    ; no power
 BASE_POWER     EQU (MAX_POWER/5) ; 20% base power for state 2, 4
 
 KP			   EQU 5 ; proportional gain
+=======
+SERVO_PERIOD   EQU 20 ; pwm signal period for the servo motor (20 ms)
+SERVO_0        EQU 1 ; pwm high time for the servo motor to stay at 0 degree
+SERVO_180      EQU 2 ; pwm high time for the servo motor to stay at 180 degrees
+>>>>>>> main
 
 ; These 'equ' must match the wiring between the DE10Lite board and the LCD!
 ; P0 is in connector JPIO.  Check "CV-8052 Soft Processor in the DE10Lite Board: Getting
@@ -327,8 +353,10 @@ Hex_to_bcd_8bit:
 ; Display Function for LCD 						
 LCD_Display_Update_func:
 	push acc
-	jnb state_change_signal, LCD_Display_Update_Done
-	clr state_change_signal
+	jbc state_change_signal, LCD_Display_Update_Do
+	ljmp LCD_Display_Update_done
+
+LCD_Display_Update_Do:
 	mov a, Control_FSM_state
 
 LCD_Display_Update_0:
@@ -745,6 +773,116 @@ end_pwm_generator:
 	ret
 ;-------------------------------------------------------------------------------;
 
+
+;--------------------------------------------------------------
+; set servo angle according to the state
+; call servo control function every 1ms
+;--------------------------------------------------------------
+call_servo_control:
+	; check current state and change servo angle
+	mov a, Control_FSM_state
+	
+	; handle state 0
+	cjne a, #0, servo_state1
+	clr servo_angle_zero ; close door at state 0
+	sjmp check_servo_flag
+
+	; handle state 1
+	servo_state1:
+	cjne a, #1, servo_state2
+	setb servo_angle_zero ; open door at state 1
+	sjmp check_servo_flag
+
+	; handle state 2
+	servo_state2:
+	cjne a, #2, servo_state3
+	clr servo_angle_zero ; close door at state 2
+	sjmp check_servo_flag
+
+	; handle state 3
+	servo_state3:
+	cjne a, #3, servo_state4
+	clr servo_angle_zero ; close door at state 3
+	sjmp check_servo_flag
+
+	; handle state 4
+	servo_state4:
+	cjne a, #4, servo_state5
+	clr servo_angle_zero ; close door at state 4
+	sjmp check_servo_flag
+
+	; handle state 5
+	servo_state5:
+	cjne a, #5, servo_state6
+	clr servo_angle_zero ; close door at state 5
+	sjmp check_servo_flag
+
+	; handle state 6
+	servo_state6:
+	cjne a, #6, servo_state7
+	clr servo_angle_zero ; close door at state 6
+	sjmp check_servo_flag
+
+	; handle state 7
+	servo_state7:
+	setb servo_angle_zero ; open door at state 7
+
+check_servo_flag:
+	; check 1 ms flag
+	jbc one_millisecond_flag_servo, run_servo_control
+	ret
+
+run_servo_control:
+	lcall servo_control
+	ret
+
+;---------------------------------------------------------------
+; servo control
+; generate a 20 ms period pwm signal to control the servo motor
+; able to make the servo motor stay at 0 degree and 180 degree
+;---------------------------------------------------------------
+servo_control:
+	push acc
+	push psw
+	setb LEDRA.5
+	mov a, servo_pwm_counter ; move servo counter to accumulator
+	inc A ; a += 1
+	cjne a, #SERVO_PERIOD, servo_pwm_angle_compare ; jump if wrapup not needed
+	mov a, #0
+
+servo_pwm_angle_compare: ; read target angle
+	mov servo_pwm_counter, A
+	jb servo_angle_zero, set_zero_degree ; set servo motor to 0 degree
+	; set servo motor to 180 degrees
+	mov a, servo_pwm_counter
+	clr c
+	subb a, #SERVO_180
+	jc servo_pwm_set_high ; set high if servo pwm counter smaller than 180 degrees duty cycle
+	sjmp servo_pwm_set_low ; set low if greater
+
+set_zero_degree:
+	; set servo motor to 0 degree
+	mov a, servo_pwm_counter
+	clr c
+	subb a, #SERVO_0
+	jc servo_pwm_set_high ; set high if servo pwm counter smaller than 0 degrees duty cycle
+	sjmp servo_pwm_set_low ; set low if greater
+
+servo_pwm_set_high:
+	; set pwm pin high
+	setb SERVO_OUT
+	sjmp servo_control_done
+
+servo_pwm_set_low:
+	; set pwm pin low
+	clr SERVO_OUT
+
+servo_control_done:
+	pop psw
+	pop acc
+	ret
+
+
 ;-------------------------------------------------------------------------------;
 ; main control fsm for the entire process
 Control_FSM:
@@ -838,7 +976,7 @@ main:
 	; We use the pins of P0 to control the LCD.  Configure as outputs.
     mov P0MOD, #01111111b ; P0.0 to P0.6 are outputs.  ('1' makes the pin output)
     ; We use pins P1.5 and P1.1 as outputs also.  Configure accordingly.
-    mov P1MOD, #00100010b ; P1.5 and P1.1 are outputs
+    mov P1MOD, #00111010b ; P1.5 and P1.1 are outputs
     mov P2MOD, #0xff
     mov P3MOD, #0xff
     ; Turn off all the LEDs
@@ -902,6 +1040,9 @@ loop:
 
 	; Update the pwm output for the ssr
 	lcall PWM_Wave 
+
+	; Update the pwm output for the servo
+	lcall call_servo_control
 
 	; After initialization the program stays in this 'forever' loop
 	ljmp loop

@@ -24,6 +24,7 @@ Timer2_ISR:
 	inc SEC_FSM_timer
 
 	setb one_ms_pwm_flag ; set the one millisecond flag for pwm signal generation
+	setb one_millisecond_flag_servo ; set the one millsiecond flag for servo pwm signal generation
 
 Timer2_ISR_done:
 	pop psw
