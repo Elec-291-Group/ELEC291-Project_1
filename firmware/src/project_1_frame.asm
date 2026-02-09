@@ -352,90 +352,152 @@ Hex_to_bcd_8bit:
     orl a, b
     mov R0, a
     ret
-
 ;-------------------------------------------------------------------------------
 ; Display Function for LCD                      
 ;-------------------------------------------------------------------------------
 LCD_Display_Update_func:
     push acc
     
-    ; --- FIX: JUMP DISTANCE ERROR ---
-    ; "LCD_Display_Update_Done" is too far away for a JNB instruction.
-    ; We use a local label right here to exit quickly.
-    jnb state_change_signal, LCD_Local_Exit
-    ; --------------------------------
+    ; ==========================================
+    ; PART 1: STATIC TEXT (Title)
+    ; Runs ONLY when the state changes
+    ; ==========================================
+    
+    ; [FIX] "Trampoline" logic for long distance jump
+    ; If signal is SET (1), we stay here and update.
+    ; If signal is CLEAR (0), we Long Jump to the Live Update section.
+    jb state_change_signal, Do_Static_Update
+    ljmp Check_Live_Update
 
+Do_Static_Update:
     clr state_change_signal
+    
+    ; State Changed: Clear Screen and Write Title
+    lcall Clear_Screen_Func
     mov a, Control_FSM_state
-
-    ; --- IMPORTANT ADD ----
-    ; If we are in State 1 (Setup), DO NOT RUN THIS, let the keypad logic handle the screen
-    cjne a, #1, LCD_Display_Update_0
-    pop acc
-    ret 
-
-; --- NEW LOCAL EXIT LABEL ---
-LCD_Local_Exit:
-    pop acc
-    ret
-; ----------------------------
-
-LCD_Display_Update_0:
-    cjne a, #0, LCD_Display_Update_1
+    
+    ; State 0: Welcome
+    cjne a, #0, LCD_Check_1
     Set_Cursor(1,1)
     Send_Constant_String(#String_state0_1)
     Set_Cursor(2,1)
     Send_Constant_String(#String_state0_2)
-    ljmp LCD_Display_Update_done
+    ljmp LCD_Done_Bridge ; Exit
 
-LCD_Display_Update_1:
-    cjne a, #1, LCD_Display_Update_2
+LCD_Check_1: ; Setup
+    cjne a, #1, LCD_Check_2
     Set_Cursor(1,1)
     Send_Constant_String(#String_state1)
-    ljmp LCD_Display_Update_done
+    ljmp LCD_Done_Bridge
 
-LCD_Display_Update_2:
-    cjne a, #2, LCD_Display_Update_3
+LCD_Check_2: ; Ramp to Soak
+    cjne a, #2, LCD_Check_3
     Set_Cursor(1,1)
     Send_Constant_String(#String_state2)
-    ljmp LCD_Display_Update_done
+    ljmp LCD_Update_Temp_Value ; Draw Temp immediately!
 
-LCD_Display_Update_3:
-    cjne a, #3, LCD_Display_Update_4
+LCD_Check_3: ; Soak
+    cjne a, #3, LCD_Check_4
     Set_Cursor(1,1)
     Send_Constant_String(#String_state3)
-    ljmp LCD_Display_Update_done
+    ljmp LCD_Update_Temp_Value
 
-LCD_Display_Update_4:
-    cjne a, #4, LCD_Display_Update_5
+LCD_Check_4: ; Ramp to Peak
+    cjne a, #4, LCD_Check_5
     Set_Cursor(1,1)
     Send_Constant_String(#String_state4)
-    ljmp LCD_Display_Update_done
+    ljmp LCD_Update_Temp_Value
 
-LCD_Display_Update_5:
-    cjne a, #5, LCD_Display_Update_6
+LCD_Check_5: ; Reflow
+    cjne a, #5, LCD_Check_6
     Set_Cursor(1,1)
     Send_Constant_String(#String_state5)
-    ljmp LCD_Display_Update_done
+    ljmp LCD_Update_Temp_Value
 
-LCD_Display_Update_6:
-    cjne a, #6, LCD_Display_Update_7
+LCD_Check_6: ; Cooling
+    cjne a, #6, LCD_Check_7
     Set_Cursor(1,1)
     Send_Constant_String(#String_state6)
-    ljmp LCD_Display_Update_done
+    ljmp LCD_Update_Temp_Value
 
-LCD_Display_Update_7:
-    cjne a, #7, LCD_Display_Update_done
+LCD_Check_7: ; Done
+    ; [FIX] Check distance safe logic for State 7
+    cjne a, #7, LCD_Done_Bridge ; If not 7, we are done
     Set_Cursor(1,1)
     Send_Constant_String(#String_state7)
-    ljmp LCD_Display_Update_done
+    ljmp LCD_Done_Bridge
 
-LCD_Display_Update_done:
+; Local bridge to reach the far-away LCD_Done
+LCD_Done_Bridge:
+    ljmp LCD_Done
+
+; ==========================================
+; PART 2: DYNAMIC VALUES (Temperature)
+; Runs every time 'one_second_flag' is set
+; ==========================================
+Check_Live_Update:
+    jnb one_second_flag, LCD_Done_Bridge
+    clr one_second_flag
+    
+    ; Only update temp for States 2, 3, 4, 5, 6
+    mov a, Control_FSM_state
+    cjne a, #2, Check_St3
+    sjmp LCD_Update_Temp_Value
+Check_St3:
+    cjne a, #3, Check_St4
+    sjmp LCD_Update_Temp_Value
+Check_St4:
+    cjne a, #4, Check_St5
+    sjmp LCD_Update_Temp_Value
+Check_St5:
+    cjne a, #5, Check_St6
+    sjmp LCD_Update_Temp_Value
+Check_St6:
+    cjne a, #6, LCD_Done
+    sjmp LCD_Update_Temp_Value
+
+; --- HELPER: Prints "XXX C" on Line 2 ---
+LCD_Update_Temp_Value:
+    Set_Cursor(2, 1)
+    
+    ; Convert current_temp to BCD
+    mov x, current_temp
+    mov x+1, current_temp+1
+    mov x+2, current_temp+2
+    mov x+3, current_temp+3
+    lcall hex2bcd
+    
+    ; Print Hundreds
+    mov a, bcd+1
+    anl a, #0x0F
+    add a, #0x30
+    lcall ?WriteData
+    
+    ; Print Tens
+    mov a, bcd+0
+    swap a
+    anl a, #0x0F
+    add a, #0x30
+    lcall ?WriteData
+    
+    ; Print Ones
+    mov a, bcd+0
+    anl a, #0x0F
+    add a, #0x30
+    lcall ?WriteData
+    
+    ; Print 'C'
+    mov a, #'C'
+    lcall ?WriteData
+    
+    ; Clear remaining line space (prevents garbage)
+    mov a, #' '
+    lcall ?WriteData
+    lcall ?WriteData
+
+LCD_Done:
     pop acc
     ret
-
-LCD_Display_Update_Temp:
-    
 ;---------------------------------------------------------
 
 KEY1_DEB:
@@ -469,7 +531,6 @@ KEY1_DEB_state3:
     mov KEY1_DEB_state, #0  
 KEY1_DEB_done:
     ret
-
 ; ------------------------------------------------------------------------------
 ; Non-blocking FSM for the one second counter
 ;-------------------------------------------------------------------------------
@@ -505,16 +566,25 @@ SEC_FSM_state3:
     cjne a, #250, SEC_FSM_done ; 250 ms passed?
     mov SEC_FSM_timer, #0
     mov SEC_FSM_state, #0
+    
+    ; --- 1 Second has passed! ---
+    setb one_second_flag
+    
     mov a, current_time_sec
-    cjne a, #59, IncCurrentTimeSec ; Don't let the seconds counter pass 59
+    cjne a, #59, IncCurrentTimeSec 
+    
+    ; --- FIX: 59s -> 0s AND Increment Minute ---
     mov current_time_sec, #0
+    inc current_time_minute    ; <--- YOU WERE MISSING THIS!
+    ; -------------------------------------------
+    
     sjmp SEC_FSM_done
+
 IncCurrentTimeSec:
     inc current_time_sec
-    cpl LEDRA.0 ; 1 Hz heartbeat LED
+    cpl LEDRA.0 
 SEC_FSM_done:
     ret
-
 ;-------------------------------------------------------------------------------
 ; PWM
 ; generate pwm signal for the ssr ; 1.5s period for the pwm signal; with 1 watt 
@@ -862,6 +932,12 @@ State2_Check:
     inc Control_FSM_state
     setb state_change_signal
     mov current_time_sec, #0
+    mov current_time_minute, #0
+    
+    ; --- ADD THIS LINE ---
+    clr soak_time_reached  ; Ensure we start fresh!
+    ; ---------------------
+
 State2_Ret:
     ret
 
@@ -891,6 +967,10 @@ State4_Check:
     inc Control_FSM_state
     setb state_change_signal
     mov current_time_sec, #0
+    mov current_time_minute, #0
+    ; --- ADD THIS LINE ---
+    clr reflow_time_reached ; Kill the ghost flag
+    ; ---------------------
 State4_Ret:
     ret
 
@@ -1064,11 +1144,32 @@ loop:
     ; 2. Decide heater power based on flags (Driver)
     lcall Power_Control
     
-    ; 3. Update 32-bit Time Variable for Comparison
-    mov current_time+0, current_time_sec
-    mov current_time+1, #0
-    mov current_time+2, #0
-    mov current_time+3, #0
+    ; 3. [FIX] Calculate Total Seconds (Minutes * 60 + Seconds)
+    ; ---------------------------------------------------------
+    ; Load Minutes into X
+    mov x+0, current_time_minute
+    mov x+1, #0
+    mov x+2, #0
+    mov x+3, #0
+    
+    ; Multiply by 60 (Minutes -> Seconds)
+    Load_y(60)
+    lcall mul32
+    
+    ; Load Seconds into Y
+    mov y+0, current_time_sec
+    mov y+1, #0
+    mov y+2, #0
+    mov y+3, #0
+    
+    ; Add them together (Total Seconds = X + Y)
+    lcall add32
+    
+    ; Store Final Result into 'current_time'
+    mov current_time+0, x+0
+    mov current_time+1, x+1
+    mov current_time+2, x+2
+    mov current_time+3, x+3
     
     lcall Time_Compare
     
@@ -1237,12 +1338,13 @@ Btn_Refl_Time_Press:
     sjmp Redraw_Screen
 
 Redraw_Screen:
-    lcall Update_Screen_Full
     ; Wait for button release
     jnb BTN_SOAK_TEMP, $
     jnb BTN_SOAK_TIME, $
     jnb BTN_REFL_TEMP, $
     jnb BTN_REFL_TIME, $
+
+    lcall Update_Screen_Full
     ret
 
 ; ----------------------------------------------------------------
@@ -1581,9 +1683,9 @@ Draw_Time_Format:
 ; --- Restore Cursor Position ---
 Restore_Cursor:
     mov A, Current_State
-    cjne A, #2, Check_State_4
+    cjne A, #2, RC_Check_State_4  
     sjmp Adjust_Cursor_Time
-Check_State_4:
+RC_Check_State_4:             
     cjne A, #4, Normal_Cursor
     sjmp Adjust_Cursor_Time
 
@@ -1631,9 +1733,20 @@ Wait_25ms_BLOCKING:
 Clear_Screen_Func:
     mov A, #0x01
     lcall ?WriteCommand
-    ; Use the blocking version here
-    lcall Wait_25ms_BLOCKING 
-    mov A, #0x0F
+    
+    ; --- FIX: HARDWARE DELAY LOOP (MAX STRENGTH) ---
+    ; The LCD needs ~2ms to clear. 
+    ; We use R0=255 to guarantee ~5ms+ delay.
+    ; This ensures the LCD is 100% ready before we send "Ramp to Soak".
+    mov R0, #255
+Clear_Delay_Loop_Outer:
+    mov R1, #255
+Clear_Delay_Loop_Inner:
+    djnz R1, Clear_Delay_Loop_Inner
+    djnz R0, Clear_Delay_Loop_Outer
+    ; -----------------------------------------------
+
+    mov A, #0x0C  ; Display ON, Cursor OFF
     lcall ?WriteCommand
     ret
 
@@ -1661,40 +1774,57 @@ Wait_For_P1_0_Release:
     
     
 ; ================================================================
-; MODULE: THERMOCOUPLE ADC DRIVER (Non-Blocking)
+; MODULE: THERMOCOUPLE ADC DRIVER
 ; ================================================================
 Read_Thermocouple:
-    ; 1. Initialize ADC (Only once)
-    ; We need a state variable to know if we are waiting or starting
-    ; For simplicity in this loop, we will just use the Wait function's status.
-    
+    ; 1. Check Non-Blocking Timer (Run once every 25ms)
     lcall Wait_25ms
-    jnc Read_TC_Exit ; If Not Done (C=0), exit immediately!
-
-    ; --- 25ms IS DONE! NOW READ ---
+    jnc Read_TC_Exit ; If 25ms hasn't passed, exit immediately
     
-    ; Reset ADC (Start conversion logic)
-    mov ADC_C, #0x80    ; Reset ADC
-    mov ADC_C, #0x00    ; Select Channel 0
+    ; --- 25ms Passed! Time to Read ---
     
-    ; Get Raw Count (0 to 4095)
-    mov x+0, ADC_L
-    mov x+1, ADC_H
+    ; 2. Initialize / Trigger ADC
+    ; Writing to ADC_C (0xA1) triggers the conversion
+    mov ADC_C, #0x80    ; Reset / Strobe
+    nop
+    nop
+    mov ADC_C, #0x00    ; Select Channel 0 (ADCINPUT 0) and Start
+    
+    ; 3. [FIX] Settle Delay
+    ; The DE10-Lite ADC bridge needs time to fetch data from the MAX10 chip.
+    ; We burn ~500 cycles to be absolutely safe.
+    mov R5, #250
+ADC_Settle_Loop:
+    nop
+    nop
+    djnz R5, ADC_Settle_Loop
+    
+    ; 4. Read Raw Data
+    mov x+0, ADC_L      ; Read Low Byte (0xA2)
+    mov x+1, ADC_H      ; Read High Byte (0xA3)
     mov x+2, #0
     mov x+3, #0
     
-    ; Convert Count to Voltage (mV)
-    Load_y(5000)        ; Load 5000 mV
-    lcall mul32         ; x = Count * 5000
+    ; 5. [FIX] Mask the 12-bit Data
+    ; The ADC is 12-bit. We MUST zero out the upper 4 bits of the High Byte
+    ; or the math below will overflow and return 0.
+    mov a, x+1
+    anl a, #0x0F
+    mov x+1, a
     
-    Load_y(4095)        ; Load Max resolution
-    lcall div32         ; x = Voltage in mV
+    ; 6. Convert to Voltage (Count * 5000 / 4095)
+    Load_y(5000)        ; Vref = 5000mV
+    lcall mul32         
     
-    ; Convert Voltage to Temperature (Gain = 10mV/C)
+    Load_y(4095)        ; 12-bit resolution
+    lcall div32         
+    
+    ; 7. Convert to Temp (Voltage / 10mV) -> e.g. 250mV / 10 = 25C
+    ; Change this Load_y value if your amp gain is different!
     Load_y(10)          
-    lcall div32
+    lcall div32         
     
-    ; Store Result
+    ; 8. Store Final Result
     mov current_temp+0, x+0
     mov current_temp+1, x+1
     mov current_temp+2, x+2
@@ -1702,7 +1832,7 @@ Read_Thermocouple:
 
 Read_TC_Exit:
     ret
-
+    
 ; ================================================================
 ; MODULE: POWER CONTROLLER (The Brain)
 ; ================================================================
