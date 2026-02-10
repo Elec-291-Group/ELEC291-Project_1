@@ -450,7 +450,7 @@
 04EC 85A33E     227            mov VAL_LM4040+1, ADC_H
 04EF            228   
 04EF            229            ; Read the signal connected to AIN7 (channel 7)
-04EF 75A100     230            mov ADC_C, #0x00
+04EF 75A107     230            mov ADC_C, #0x07
 04F2            231       
 04F2            232       ; Convert to voltage
 04F2 85A230     233            mov x+0, ADC_L

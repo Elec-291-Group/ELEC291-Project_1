@@ -1138,7 +1138,7 @@ State5_Ret:
 Control_FSM_state6_a:
     inc Control_FSM_state
     setb state_change_signal
-	lcall Beep_Once
+	lcall Beep_Five
 Control_FSM_state6:
     cjne a, #6, Control_FSM_state7
     ; Wait for Cooling Temp Reached
@@ -1146,7 +1146,6 @@ Control_FSM_state6:
     clr cooling_temp_reached
     inc Control_FSM_state
     setb state_change_signal
-	lcall Beep_Five
 State6_Ret:
     ret
 
@@ -1962,7 +1961,7 @@ Proceed_Reading:
     mov ADC_C, #0x80    ; Reset
     nop
     nop
-    mov ADC_C, #0x00    ; Start Channel 0
+    mov ADC_C, #0x01    ; Start Channel 0
     
     ; 3. Settle Delay
     mov R5, #250
@@ -2002,7 +2001,7 @@ Skip_Restore:
     lcall div32         
     Load_Y(100)
     lcall mul32
-    Load_y(1267)        
+    Load_y(1323)        
     lcall div32    
     Load_y(COLD_JUNCTION_TEMP)
     lcall add32     
