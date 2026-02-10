@@ -428,6 +428,19 @@ Hex_to_bcd_8bit:
 ;-------------------------------------------------------------------------------
 ; Display Function for LCD                      
 ;-------------------------------------------------------------------------------
+LCD_Print_2Digits:
+    lcall Hex_to_bcd_8bit
+    mov a, R0
+    swap a
+    anl a, #0x0F
+    add a, #0x30
+    lcall ?WriteData
+    mov a, R0
+    anl a, #0x0F
+    add a, #0x30
+    lcall ?WriteData
+    ret
+
 LCD_Display_Update_func:
     push acc
     
@@ -567,6 +580,15 @@ LCD_Update_Temp_Value:
     mov a, #' '
     lcall ?WriteData
     lcall ?WriteData
+
+    ; Print time MM:SS at bottom right
+    Set_Cursor(2, 12)
+    mov a, current_time_minute
+    lcall LCD_Print_2Digits
+    mov a, #':'
+    lcall ?WriteData
+    mov a, current_time_sec
+    lcall LCD_Print_2Digits
 
     ; Mirror temp to serial (PuTTY/screen)
     lcall Serial_Send_Temp_Line
@@ -1349,6 +1371,14 @@ Reset_Delay_Inner:
 ; while(1) loop
 ;-------------------------------------------------------------------------------;
 loop:
+    ; Full reset button on P3.7 (active-low to GND)
+     jnb P3_7, Full_Reset_Trig
+    sjmp Full_Reset_Check_Done
+
+Full_Reset_Trig:
+    ljmp Full_Reset
+
+Full_Reset_Check_Done:
     ; Check the FSM for KEY1 debounce
     lcall KEY1_DEB
     
@@ -1995,6 +2025,15 @@ Get_Buf_4:
 Wait_For_P1_0_Release:
     jnb P1.0, $    ; Wait here while the button is still pressed (0)
     ret
+
+; --- Full reset helper for P3.7 (active-low) ---
+Wait_For_P3_7_Release:
+    jnb P3_7, $    ; Wait here while the button is still pressed (0)
+    ret
+
+Full_Reset:
+    lcall Wait_For_P3_7_Release
+    ljmp main
 
 ; ================================================================
 ; MODULE: THERMOCOUPLE ADC DRIVER (WITH NOISE SUPPRESSION & JUMP FIX)
