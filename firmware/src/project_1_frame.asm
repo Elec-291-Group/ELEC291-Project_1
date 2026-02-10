@@ -1,4 +1,4 @@
-\; Project 1
+; Project 1
 ; CV-8052 microcontroller in DE10-Lite board
 ;-------------------------------------------------------------------------------
 ; Reset vector
@@ -848,9 +848,20 @@ Safety_Check_TC:
     push AR1
     push AR2
 
-    ; If already aborted or startup window closed, do nothing
-    jb   tc_missing_abort, Safety_TC_Done
-    jnb  tc_startup_window, Safety_TC_Done
+    ; ---------------------------------------------------------
+    ; [FIX] GATEKEEPER: IGNORE UNLESS IN STATE 2 (RAMP TO SOAK)
+    ; ---------------------------------------------------------
+    mov a, Control_FSM_state
+    cjne a, #2, Safety_TC_Exit_Bridge ; If State != 2, skip everything
+    sjmp Safety_Logic_Proceed         ; If State == 2, do the check
+
+    Safety_TC_Exit_Bridge:
+        ljmp Safety_TC_Done               ; Jump to the end
+
+    Safety_Logic_Proceed:
+        ; If already aborted or startup window closed, do nothing
+        jb   tc_missing_abort, Safety_TC_Done
+        jnb  tc_startup_window, Safety_TC_Done
 
     ; Check: current_time >= 60 ?
     mov  R0, #current_time
@@ -859,7 +870,7 @@ Safety_Check_TC:
 
     Load_Y(60)
     lcall x_lt_y
-    jb   mf, Safety_TC_Done        ; still < 60s → keep waiting
+    jb   mf, Safety_TC_Exit_Bridge        ; still < 60s → keep waiting
 
     ; We reached 60s: close the startup window so it won't re-check later
     clr  tc_startup_window
@@ -871,13 +882,21 @@ Safety_Check_TC:
 
     Load_Y(50)
     lcall x_lt_y
-    jnb  mf, Safety_TC_Done        ; temp >= 50 → pass
+    jnb  mf, Safety_TC_Exit_Bridge        ; temp >= 50 → pass
 
     ; FAIL: at 60s, still below 50C → abort
+    clr  PWM_OUT
     setb tc_missing_abort
     setb stop_signal
-    clr  PWM_OUT
 	lcall Beep_Ten
+    ; 3. Force FSM to State 0 (Welcome)
+    mov Control_FSM_state, #0
+    
+    ; 4. Force UI to State 0 (Home Screen)
+    mov Current_State, #0
+    
+    ; 5. Trigger Screen Refresh
+    setb state_change_signal ; Tell loop to redraw "Welcome"
 
 Safety_TC_Done:
     pop  AR2
@@ -1023,6 +1042,11 @@ Control_FSM_state2_a:
     mov a, Control_FSM_state   ; [FIX] RELOAD 'A' so it matches the new state!
     setb state_change_signal
     lcall Beep_Once
+
+    setb tc_startup_window    ; OPEN the safety window
+    clr tc_missing_abort      ; Clear any previous aborts
+    mov current_time_sec, #0  ; Reset Seconds to 0
+    mov current_time_minute, #0 ; Reset Minutes to 0
     
     ; [FIX] CLEAR FLAG ON ENTRY
     ; Force the system to wait for at least one fresh temp reading
