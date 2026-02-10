@@ -552,6 +552,9 @@ LCD_Update_Temp_Value:
     mov x+2, current_temp+2
     mov x+3, current_temp+3
     lcall hex2bcd
+
+    ; Update HEX2-HEX0 with temperature
+    lcall Update_HEX_Temp
     
     ; Print Hundreds
     mov a, bcd+1
@@ -597,6 +600,29 @@ LCD_Done:
     pop acc
     ret
 ;---------------------------------------------------------
+
+;-------------------------------------------------------------------------------
+; Update HEX2-HEX0 with temperature (3 digits)
+;-------------------------------------------------------------------------------
+Update_HEX_Temp:
+    mov dptr, #T_7seg
+    ; Hundreds -> HEX2
+    mov a, bcd+1
+    anl a, #0x0F
+    movc a, @a+dptr
+    mov HEX2, a
+    ; Tens -> HEX1
+    mov a, bcd+0
+    swap a
+    anl a, #0x0F
+    movc a, @a+dptr
+    mov HEX1, a
+    ; Ones -> HEX0
+    mov a, bcd+0
+    anl a, #0x0F
+    movc a, @a+dptr
+    mov HEX0, a
+    ret
 
 KEY1_DEB:
 ;non-blocking state machine for KEY1 debounce
