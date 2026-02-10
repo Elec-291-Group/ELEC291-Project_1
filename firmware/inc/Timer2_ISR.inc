@@ -32,15 +32,12 @@ Timer2_ISR:
     ; --- 1. Existing Non-Blocking Seconds Increment and Periphals Debounce Timers ---
     inc SEC_FSM_timer
     setb one_ms_pwm_flag 
-<<<<<<< HEAD
 	setb one_ms_buzz_flag
 
     inc PB0_DEB_timer
     inc PB2_DEB_timer
-=======
     setb one_ms_beep_flag
     setb one_millisecond_flag_servo
->>>>>>> main
 
     ; --- 2. NEW: Non-Blocking Delay Counters ---
     ; A. BUTTON DELAY
