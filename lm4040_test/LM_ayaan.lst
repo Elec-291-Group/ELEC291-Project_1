@@ -1,0 +1,618 @@
+0000              1   ; ==============================================================================
+0000              2   ; FINAL FIX: LM335 + PROBE + LCD + SLOW REFRESH
+0000              3   ; ==============================================================================
+                  5   $LIST
+0000              7   
+0000              8   ; ------------------------------------------------------------------------------
+0000              9   ; 1. PIN DEFINITIONS
+0000             10   ; ------------------------------------------------------------------------------
+0000             11   ELCD_RS equ P1.7
+0000             12   ELCD_E  equ P1.1
+0000             13   ELCD_D4 equ P0.7
+0000             14   ELCD_D5 equ P0.5
+0000             15   ELCD_D6 equ P0.3
+0000             16   ELCD_D7 equ P0.1
+0000             17   
+0000             18   ; ---------------- constants ----------------
+0000             19   FREQ      EQU 33333333
+0000             20   BAUD      EQU 57600
+0000             21   T2LOAD    EQU 65536-(FREQ/(32*BAUD))
+0000             22   
+0000             23   ADC_CH_TC     EQU 0           
+0000             24   ADC_CH_REF    EQU 4           
+0000             25   ADC_CH_LM335  EQU 5           
+0000             26   AVG_N         EQU 8           
+0000             27   ADC_FS_mVREF  EQU 4096        
+0000             28   
+0000             29   ; ---------------- variables ----------------
+0030             30   dseg at 30h
+0030             31   x:      ds 4
+0034             32   y:      ds 4
+0038             33   bcd:    ds 5
+003D             34   
+0040             35   dseg at 40h
+0040             36   sample_count:    ds 1
+0041             37   avg_counts:      ds 4
+0045             38   ref_counts:      ds 4
+0049             39   ref_countdown:   ds 1
+004A             40   tc_delta:        ds 4
+004E             41   
+0000             42   bseg
+0000             43   mf:     dbit 1
+0001             44   
+0000             45   cseg
+0000             46   ; ------------------------------------------------------------------------------
+0000             47   ; 2. RESET VECTOR
+0000             48   ; ------------------------------------------------------------------------------
+0000             49   org 0x0000
+0000 020640      50       ljmp mycode
+0003             51   
+0003             52   ; ------------------------------------------------------------------------------
+0003             53   ; 3. LIBRARIES
+0003             54   ; ------------------------------------------------------------------------------
+0100             55   org 0x0100
+                 -1   $include(math32.asm)
+                614   $LIST
+                 -1   $include(LCD_4bit_DE10Lite_no_RW.inc)
+03F2              1   ;  LCD routines adapted for the DE10-Lite configured as a CV_8052 processor
+03F2              2   cseg
+03F2              3   
+03F2              4   ; When using a 33.333333MHz crystal clock
+03F2              5   ; one cycle takes 1.0/33.333333MHz = 30 ns
+03F2              6   
+03F2              7   ;---------------------------------;
+03F2              8   ; Wait 40 microseconds            ;
+03F2              9   ;---------------------------------;
+03F2             10   Wait40uSec:
+03F2 C000        11            push AR0
+03F4 78BE        12            mov R0, #190
+03F6             13   L0: 
+03F6 00          14            nop
+03F7 00          15            nop
+03F8 00          16            nop
+03F9 00          17            nop
+03FA D8FA        18            djnz R0, L0 ; 1+1+1+1+3 cycles->7*30ns*190=40us
+03FC D000        19            pop AR0
+03FE 22          20       ret
+03FF             21   
+03FF             22   ;---------------------------------;
+03FF             23   ; Wait 'R2' milliseconds          ;
+03FF             24   ;---------------------------------;
+                 25   Wait_Milli_Seconds mac
+                 26   	push AR2
+                 27   	mov R2, %0
+                 28   	lcall ?Wait_Milli_Seconds
+                 29   	pop AR2
+                 30   endmac
+03FF             31   
+03FF             32   ?Wait_Milli_Seconds:
+03FF C000        33            push AR0
+0401 C001        34            push AR1
+0403 7932        35   L3: mov R1, #50
+0405 78DF        36   L2: mov R0, #223
+0407 D8FE        37   L1: djnz R0, L1 ; 3 cycles->3*30ns*250=20.07us
+0409 D9FA        38       djnz R1, L2 ; 20.07us*50=1.004ms
+040B DAF6        39       djnz R2, L3 ; number of millisecons to wait passed in R2
+040D D001        40       pop AR1
+040F D000        41       pop AR0
+0411 22          42       ret
+0412             43            
+0412             44   ;---------------------------------;
+0412             45   ; Toggles the 'E' pin in the LCD  ;
+0412             46   ;---------------------------------;
+0412             47   ELCD_pulse:
+0412 D291        48            setb ELCD_E
+0414 1203F2      49            lcall Wait40uSec
+0417 C291        50            clr ELCD_E
+0419 1203F2      51       lcall Wait40uSec ; This line is needed in the DE1SoC running an 8051 because it is much faster than the AT89LP51RC2
+041C 22          52       ret
+041D             53   
+041D             54   ;---------------------------------;
+041D             55   ; Writes acc to LCD in 4-bit mode ;
+041D             56   ;---------------------------------;
+041D             57   ELCD_byte:
+041D             58            ; Write high 4 bits first
+041D A2E7        59            mov c, ACC.7
+041F 9281        60            mov ELCD_D7, c
+0421 A2E6        61            mov c, ACC.6
+0423 9283        62            mov ELCD_D6, c
+0425 A2E5        63            mov c, ACC.5
+0427 9285        64            mov ELCD_D5, c
+0429 A2E4        65            mov c, ACC.4
+042B 9287        66            mov ELCD_D4, c
+042D 120412      67       lcall ELCD_pulse
+0430             68            ; Write low 4 bits next
+0430 A2E3        69            mov c, ACC.3
+0432 9281        70            mov ELCD_D7, c
+0434 A2E2        71            mov c, ACC.2
+0436 9283        72            mov ELCD_D6, c
+0438 A2E1        73            mov c, ACC.1
+043A 9285        74            mov ELCD_D5, c
+043C A2E0        75            mov c, ACC.0
+043E 9287        76            mov ELCD_D4, c
+0440 120412      77       lcall ELCD_pulse
+0443 22          78            ret
+0444             79   
+0444             80   ;---------------------------------;
+0444             81   ; Write data to LCD               ;
+0444             82   ;---------------------------------;
+                 83   WriteData mac
+                 84   	mov a, %0
+                 85   	lcall ?WriteData
+                 86   endmac
+0444             87            
+0444             88   ?WriteData:
+0444 D297        89            setb ELCD_RS
+0446 02041D      90            ljmp ELCD_byte
+0449             91   
+0449             92   ;---------------------------------;
+0449             93   ; Write command to LCD            ;
+0449             94   ;---------------------------------;
+                 95   WriteCommand mac
+                 96   	mov a, %0
+                 97   	lcall ?WriteCommand
+                 98   endmac
+0449             99   
+0449            100   ?WriteCommand:
+0449 C297       101            clr ELCD_RS
+044B 02041D     102            ljmp ELCD_byte
+044E            103   
+044E            104   ;---------------------------------;
+044E            105   ; Configure LCD in 4-bit mode     ;
+044E            106   ;---------------------------------;
+044E            107   ELCD_4BIT:
+044E C291       108            clr ELCD_E   ; Resting state of LCD's enable pin is zero
+0450            109            ;clr ELCD_RW  ; RW forced to zero
+0450            110            
+0450            111            ; After power on, let the LCD start up before initializing
+0450 C002       112            push AR2
+0452 7A28       112            mov R2, #40
+0454 1203FF     112            lcall ?Wait_Milli_Seconds
+0457 D002       112            pop AR2
+0459            113            
+0459            114            ; First make sure the LCD is in 8-bit mode and then change to 4-bit mode
+0459 7433       115            mov a, #0x33
+045B 120449     115            lcall ?WriteCommand
+045E 7433       116            mov a, #0x33
+0460 120449     116            lcall ?WriteCommand
+0463 7432       117            mov a, #0x32
+0465 120449     117            lcall ?WriteCommand ; change to 4-bit mode
+0468            118   
+0468            119            ; Configure the LCD
+0468 7428       120            mov a, #0x28
+046A 120449     120            lcall ?WriteCommand
+046D 740C       121            mov a, #0x0c
+046F 120449     121            lcall ?WriteCommand
+0472 7401       122            mov a, #0x01
+0474 120449     122            lcall ?WriteCommand ;  Clear screen command (takes some time)
+0477            123   
+0477            124       ;Wait for the clear screen command to finish.
+0477 C002       125            push AR2
+0479 7A02       125            mov R2, #2
+047B 1203FF     125            lcall ?Wait_Milli_Seconds
+047E D002       125            pop AR2
+0480 22         126       ret
+0481            127   
+0481            128   ;---------------------------------;
+0481            129   ; Send a constant string to LCD   ;
+0481            130   ;---------------------------------;
+                131   Send_Constant_String mac
+                132   	push dph
+                133   	push dpl
+                134   	push acc
+                135   	mov dptr, %0
+                136   	lcall ?Send_Constant_String
+                137   	pop acc
+                138   	pop dpl
+                139   	pop dph
+                140   endmac
+0481            141   
+0481            142   ?Send_Constant_String:
+0481 E4         143       clr a
+0482 93         144       movc a, @a+dptr
+0483 6006       145       jz ?Send_Constant_String_Done
+0485 120444     146       lcall ?WriteData
+0488 A3         147       inc dptr
+0489 80F6       148       sjmp ?Send_Constant_String
+048B            149   ?Send_Constant_String_Done:
+048B 22         150       ret  
+048C            151   
+048C            152   ;---------------------------------;
+048C            153   ; Set LCD cursor at row, column   ;
+048C            154   ;---------------------------------;
+                155   Set_Cursor mac
+                156   	push acc
+                157   	mov a, #%1
+                158   	dec a
+                159   	lcall ?Set_Cursor_%0 ; Select column and row
+                160   	pop acc
+                161   endmac
+048C            162   
+048C            163   ?Set_Cursor_2:
+048C 4440       164            orl a, #01000000B
+048E            165   ?Set_Cursor_1:
+048E 4480       166            orl a, #10000000B
+0490 020449     167            ljmp ?WriteCommand ; Select column and row
+0493            168   
+0493            169   ;---------------------------------;
+0493            170   ; Display a BCD number in the LCD ;
+0493            171   ;---------------------------------;
+                172   Display_BCD mac
+                173   	push ar0
+                174   	mov r0, %0
+                175   	lcall ?Display_BCD
+                176   	pop ar0
+                177   endmac
+0493            178   
+0493            179   ?Display_BCD:
+0493 C0E0       180            push acc
+0495            181            ; Write most significant digit
+0495 E8         182            mov a, r0
+0496 C4         183            swap a
+0497 540F       184            anl a, #0fh
+0499 4430       185            orl a, #30h
+049B 120444     186            lcall ?WriteData
+049E            187            ; write least significant digit
+049E E8         188            mov a, r0
+049F 540F       189            anl a, #0fh
+04A1 4430       190            orl a, #30h
+04A3 120444     191            lcall ?WriteData
+04A6 D0E0       192            pop acc
+04A8 22         193            ret
+04A9            194   
+04A9            195   ;------------------------------------;
+04A9            196   ; Display a char in the LCD          ;
+04A9            197   ;------------------------------------;
+                198   Display_char mac
+                199   	push acc
+                200   	mov a, %0
+                201   	lcall ?WriteData
+                202   	pop acc
+                203   endmac
+04A9            204   
+04A9             58            
+04A9             59   ; ==================================================
+04A9             60   ; ================= LOOKUP TABLE ===================
+04A9             61   ; ==================================================
+04A9             62   myLUT:
+04A9 C0F9A4B0    63       DB 0xC0, 0xF9, 0xA4, 0xB0, 0x99
+     99
+04AE 9282F880    64       DB 0x92, 0x82, 0xF8, 0x80, 0x90
+     90
+04B3 8883C6A1    65       DB 0x88, 0x83, 0xC6, 0xA1, 0x86, 0x8E
+     868E
+04B9             66   
+04B9             67   ; ==================================================
+04B9             68   ; ================= SERIAL INIT ====================
+04B9             69   ; ==================================================
+04B9             70   InitSerialPort:
+04B9 C2CA        71       clr TR2
+04BB 75C830      72       mov T2CON, #30H
+04BE 75CBFF      73       mov RCAP2H, #high(T2LOAD)
+04C1 75CAEE      74       mov RCAP2L, #low(T2LOAD)
+04C4 D2CA        75       setb TR2
+04C6 759852      76       mov SCON, #52H
+04C9 D299        77       setb TI
+04CB 22          78       ret
+04CC             79   
+04CC             80   putchar:
+04CC 3099FD      81       jnb TI, putchar
+04CF C299        82       clr TI
+04D1 F599        83       mov SBUF, a
+04D3 22          84       ret
+04D4             85   
+04D4             86   ; ==================================================
+04D4             87   ; ================= ADC HELPERS ====================
+04D4             88   ; ==================================================
+04D4             89   ADC_Settle:
+04D4 7FFA        90       mov R7, #250
+04D6             91   AS_1:
+04D6 00          92       nop
+04D7 DFFD        93       djnz R7, AS_1
+04D9 22          94       ret
+04DA             95   
+04DA             96   ReadADC5_to_y: ; Read LM335
+04DA 75A105      97       mov ADC_C, #ADC_CH_LM335
+04DD 1204D4      98       lcall ADC_Settle
+04E0 753700      99       mov y+3, #0
+04E3 753600     100       mov y+2, #0
+04E6 85A335     101       mov y+1, ADC_H
+04E9 85A234     102       mov y+0, ADC_L
+04EC E535       103       mov a, y+1
+04EE 540F       104       anl a, #0x0F
+04F0 F535       105       mov y+1, a
+04F2 22         106       ret
+04F3            107   
+04F3            108   ReadADC4_to_y: ; Read Reference
+04F3 75A104     109       mov ADC_C, #ADC_CH_REF
+04F6 1204D4     110       lcall ADC_Settle
+04F9 753700     111       mov y+3, #0
+04FC 753600     112       mov y+2, #0
+04FF 85A335     113       mov y+1, ADC_H
+0502 85A234     114       mov y+0, ADC_L
+0505 E535       115       mov a, y+1
+0507 540F       116       anl a, #0x0F
+0509 F535       117       mov y+1, a
+050B 22         118       ret
+050C            119   
+050C            120   ; ==================================================
+050C            121   ; ======= GET ROOM TEMP (LM335) SUBROUTINE =========
+050C            122   ; ==================================================
+050C            123   Get_LM335_TempC:
+050C            124       ; 1. Sum LM335 Samples
+050C 753000     125       mov x+0,#0
+050F 753100     126       mov x+1,#0
+0512 753200     127       mov x+2,#0
+0515 753300     128       mov x+3,#0
+0518 754000     129       mov sample_count,#0
+051B            130   LM_SumLoop:
+051B 1204DA     131       lcall ReadADC5_to_y
+051E 1201A5     132       lcall add32
+0521 0540       133       inc sample_count
+0523 E540       134       mov a, sample_count
+0525 B408F3     135       cjne a, #AVG_N, LM_SumLoop
+0528            136   
+0528            137       ; Average LM335
+0528 753408     138            mov y+0, #low (AVG_N % 0x10000) 
+052B 753500     138            mov y+1, #high(AVG_N % 0x10000) 
+052E 753600     138            mov y+2, #low (AVG_N / 0x10000) 
+0531 753700     138            mov y+3, #high(AVG_N / 0x10000) 
+0534 120352     139       lcall div32
+0537 853041     140       mov avg_counts+0, x+0
+053A 853142     141       mov avg_counts+1, x+1
+053D 853243     142       mov avg_counts+2, x+2
+0540 853344     143       mov avg_counts+3, x+3
+0543            144   
+0543            145       ; 2. Sum Reference Samples
+0543 753000     146       mov x+0,#0
+0546 753100     147       mov x+1,#0
+0549 753200     148       mov x+2,#0
+054C 753300     149       mov x+3,#0
+054F 754908     150       mov ref_countdown, #AVG_N
+0552            151   REF_SumLoop:
+0552 1204F3     152       lcall ReadADC4_to_y
+0555 1201A5     153       lcall add32
+0558 D549F7     154       djnz ref_countdown, REF_SumLoop
+055B            155   
+055B            156       ; Average Reference
+055B 753408     157            mov y+0, #low (AVG_N % 0x10000) 
+055E 753500     157            mov y+1, #high(AVG_N % 0x10000) 
+0561 753600     157            mov y+2, #low (AVG_N / 0x10000) 
+0564 753700     157            mov y+3, #high(AVG_N / 0x10000) 
+0567 120352     158       lcall div32
+056A            159       
+056A            160       ; Check for Divide by Zero
+056A E530       161       mov a, x+0
+056C 4531       162       orl a, x+1
+056E 4532       163       orl a, x+2
+0570 4533       164       orl a, x+3
+0572 700C       165       jnz REF_OK
+0574 753001     166            mov x+0, #low (1 % 0x10000) 
+0577 753100     166            mov x+1, #high(1 % 0x10000) 
+057A 753200     166            mov x+2, #low (1 / 0x10000) 
+057D 753300     166            mov x+3, #high(1 / 0x10000)  ; Prevent crash
+0580            167   REF_OK:
+0580 853045     168       mov ref_counts+0, x+0
+0583 853146     169       mov ref_counts+1, x+1
+0586 853247     170       mov ref_counts+2, x+2
+0589 853348     171       mov ref_counts+3, x+3
+058C            172   
+058C            173       ; 3. Math: mV = (Counts * 4096) / Ref_Counts
+058C 854130     174       mov x+0, avg_counts+0
+058F 854231     175       mov x+1, avg_counts+1
+0592 854332     176       mov x+2, avg_counts+2
+0595 854433     177       mov x+3, avg_counts+3
+0598            178       
+0598 753400     179            mov y+0, #low (ADC_FS_mVREF % 0x10000) 
+059B 753510     179            mov y+1, #high(ADC_FS_mVREF % 0x10000) 
+059E 753600     179            mov y+2, #low (ADC_FS_mVREF / 0x10000) 
+05A1 753700     179            mov y+3, #high(ADC_FS_mVREF / 0x10000) 
+05A4 12025E     180       lcall mul32
+05A7            181       
+05A7 854534     182       mov y+0, ref_counts+0
+05AA 854635     183       mov y+1, ref_counts+1
+05AD 854736     184       mov y+2, ref_counts+2
+05B0 854837     185       mov y+3, ref_counts+3
+05B3 120352     186       lcall div32
+05B6            187   
+05B6            188       ; 4. Math: TempC = ((mV * 10) - 27315) / 100
+05B6 75340A     189            mov y+0, #low (10 % 0x10000) 
+05B9 753500     189            mov y+1, #high(10 % 0x10000) 
+05BC 753600     189            mov y+2, #low (10 / 0x10000) 
+05BF 753700     189            mov y+3, #high(10 / 0x10000) 
+05C2 12025E     190       lcall mul32
+05C5 7534B3     191            mov y+0, #low (27315 % 0x10000) 
+05C8 75356A     191            mov y+1, #high(27315 % 0x10000) 
+05CB 753600     191            mov y+2, #low (27315 / 0x10000) 
+05CE 753700     191            mov y+3, #high(27315 / 0x10000) 
+05D1 1201C8     192       lcall sub32
+05D4 753464     193            mov y+0, #low (100 % 0x10000) 
+05D7 753500     193            mov y+1, #high(100 % 0x10000) 
+05DA 753600     193            mov y+2, #low (100 / 0x10000) 
+05DD 753700     193            mov y+3, #high(100 / 0x10000) 
+05E0 120352     194       lcall div32
+05E3 22         195       ret
+05E4            196   
+05E4            197   ; ==================================================
+05E4            198   ; ================= DISPLAY LOGIC ==================
+05E4            199   ; ==================================================
+05E4            200   Display_Voltage_7seg:
+05E4 9004A9     201       mov dptr, #myLUT
+05E7            202       
+05E7            203       ; HEX3: 0.
+05E7 7400       204       mov a, #0
+05E9 93         205       movc a, @a+dptr
+05EA 547F       206       anl a, #0x7F       ; Add decimal point
+05EC F594       207       mov HEX3, a
+05EE            208       
+05EE            209       ; HEX2: Hundreds
+05EE E539       210       mov a, bcd+1
+05F0 540F       211       anl a, #0x0F
+05F2 93         212       movc a, @a+dptr
+05F3 F593       213       mov HEX2, a
+05F5            214       
+05F5            215       ; HEX1: Tens
+05F5 E538       216       mov a, bcd+0
+05F7 C4         217       swap a
+05F8 540F       218       anl a, #0x0F
+05FA 93         219       movc a, @a+dptr
+05FB F592       220       mov HEX1, a
+05FD            221       
+05FD            222       ; HEX0: Ones
+05FD E538       223       mov a, bcd+0
+05FF 540F       224       anl a, #0x0F
+0601 93         225       movc a, @a+dptr
+0602 F591       226       mov HEX0, a
+0604 22         227       ret
+0605            228   
+0605            229   ; --- [FIX] ADDED LCD FUNCTION BACK ---
+0605            230   Display_Voltage_LCD:
+0605 C0E0       231            push acc
+0607 7401       231            mov a, #1
+0609 14         231            dec a
+060A 12048C     231            lcall ?Set_Cursor_2 ; Select column and row
+060D D0E0       231            pop acc
+060F 7454       232       mov a, #'T'
+0611 120444     233       lcall ?WriteData
+0614 743D       234       mov a, #'='
+0616 120444     235       lcall ?WriteData
+0619            236       
+0619            237       ; Print "0."
+0619 7430       238       mov a, #'0'
+061B 120444     239       lcall ?WriteData
+061E 742E       240       mov a, #'.'
+0620 120444     241       lcall ?WriteData
+0623            242       
+0623            243       ; Hundreds
+0623 E539       244       mov a, bcd+1
+0625 540F       245       anl a, #0x0F
+0627 4430       246       orl a, #'0'
+0629 120444     247       lcall ?WriteData
+062C            248       
+062C            249       ; Tens
+062C E538       250       mov a, bcd+0
+062E C4         251       swap a
+062F 540F       252       anl a, #0x0F
+0631 4430       253       orl a, #'0'
+0633 120444     254       lcall ?WriteData
+0636            255       
+0636            256       ; Ones
+0636 E538       257       mov a, bcd+0
+0638 540F       258       anl a, #0x0F
+063A 4430       259       orl a, #'0'
+063C 120444     260       lcall ?WriteData
+063F 22         261       ret
+0640            262   
+0640            263   ; ==================================================
+0640            264   ; ================= MAIN PROGRAM ===================
+0640            265   ; ==================================================
+0640            266   mycode:
+0640 C2AF       267       clr EA              ; Disable Interrupts (Safety)
+0642 7581C0     268       mov SP, #0xC0       ; Move Stack to Upper RAM
+0645            269       
+0645 759AAA     270       mov P0MOD, #0xAA    
+0648 759B82     271       mov P1MOD, #0x82   
+064B            272   
+064B 1204B9     273       lcall InitSerialPort
+064E 12044E     274       lcall ELCD_4BIT     ; Init LCD
+0651            275   
+0651            276   forever:
+0651            277       ; -------------------------------------------
+0651            278       ; STEP 1: READ THERMOCOUPLE (WITH AVERAGING)
+0651            279       ; -------------------------------------------
+0651 753000     280       mov x+0, #0
+0654 753100     281       mov x+1, #0
+0657 753200     282       mov x+2, #0
+065A 753300     283       mov x+3, #0
+065D 7C20       284       mov R4, #32        
+065F            285   
+065F            286   TC_Avg_Loop:
+065F 75A100     287       mov ADC_C, #ADC_CH_TC  
+0662 1204D4     288       lcall ADC_Settle       
+0665            289       
+0665 85A234     290       mov y+0, ADC_L
+0668 85A335     291       mov y+1, ADC_H
+066B 753600     292       mov y+2, #0
+066E 753700     293       mov y+3, #0
+0671            294       
+0671 E535       295       mov a, y+1
+0673 540F       296       anl a, #0x0F
+0675 F535       297       mov y+1, a
+0677            298       
+0677 1201A5     299       lcall add32         
+067A DCE3       300       djnz R4, TC_Avg_Loop
+067C            301       
+067C 753420     302            mov y+0, #low (32 % 0x10000) 
+067F 753500     302            mov y+1, #high(32 % 0x10000) 
+0682 753600     302            mov y+2, #low (32 / 0x10000) 
+0685 753700     302            mov y+3, #high(32 / 0x10000) 
+0688 120352     303       lcall div32
+068B            304       
+068B            305       ; -------------------------------------------
+068B            306       ; STEP 2: CALCULATE PROBE DELTA
+068B            307       ; -------------------------------------------
+068B 753488     308            mov y+0, #low (5000 % 0x10000) 
+068E 753513     308            mov y+1, #high(5000 % 0x10000) 
+0691 753600     308            mov y+2, #low (5000 / 0x10000) 
+0694 753700     308            mov y+3, #high(5000 / 0x10000) 
+0697 12025E     309       lcall mul32
+069A 7534FF     310            mov y+0, #low (4095 % 0x10000) 
+069D 75350F     310            mov y+1, #high(4095 % 0x10000) 
+06A0 753600     310            mov y+2, #low (4095 / 0x10000) 
+06A3 753700     310            mov y+3, #high(4095 / 0x10000) 
+06A6 120352     311       lcall div32
+06A9            312       
+06A9            313       ; NOTE: Check this gain (12300 divisor) if temp is wrong!
+06A9 7534E8     314            mov y+0, #low (1000 % 0x10000) 
+06AC 753503     314            mov y+1, #high(1000 % 0x10000) 
+06AF 753600     314            mov y+2, #low (1000 / 0x10000) 
+06B2 753700     314            mov y+3, #high(1000 / 0x10000) 
+06B5 12025E     315       lcall mul32
+06B8 75340C     316            mov y+0, #low (12300 % 0x10000) 
+06BB 753530     316            mov y+1, #high(12300 % 0x10000) 
+06BE 753600     316            mov y+2, #low (12300 / 0x10000) 
+06C1 753700     316            mov y+3, #high(12300 / 0x10000) 
+06C4 120352     317       lcall div32
+06C7            318       
+06C7 85304A     319       mov tc_delta+0, x+0
+06CA 85314B     320       mov tc_delta+1, x+1
+06CD 85324C     321       mov tc_delta+2, x+2
+06D0 85334D     322       mov tc_delta+3, x+3
+06D3            323       
+06D3            324       ; -------------------------------------------
+06D3            325       ; STEP 3: GET ROOM TEMP (LM335)
+06D3            326       ; -------------------------------------------
+06D3 12050C     327       lcall Get_LM335_TempC
+06D6            328       
+06D6            329       ; -------------------------------------------
+06D6            330       ; STEP 4: ADD THEM UP
+06D6            331       ; -------------------------------------------
+06D6 854A34     332       mov y+0, tc_delta+0
+06D9 854B35     333       mov y+1, tc_delta+1
+06DC 854C36     334       mov y+2, tc_delta+2
+06DF 854D37     335       mov y+3, tc_delta+3
+06E2 1201A5     336       lcall add32
+06E5            337       
+06E5            338       ; -------------------------------------------
+06E5            339       ; STEP 5: DISPLAY
+06E5            340       ; -------------------------------------------
+06E5 120100     341       lcall hex2bcd
+06E8 1205E4     342       lcall Display_Voltage_7seg
+06EB 120605     343       lcall Display_Voltage_LCD  ; [FIX] Call the LCD function!
+06EE            344       
+06EE            345       ; --- [FIX] SLOW DOWN THE REFRESH RATE ---
+06EE            346       ; Old delay was ~0.5ms. This delay is ~200ms.
+06EE            347       ; This stops the "flickering/spazzing".
+06EE 7D0A       348       mov R5, #10
+06F0            349   Delay_L3:
+06F0 7EFA       350       mov R6, #250
+06F2            351   Delay_L2:
+06F2 7FFA       352       mov R7, #250
+06F4            353   Delay_L1:
+06F4 DFFE       354       djnz R7, Delay_L1
+06F6 DEFA       355       djnz R6, Delay_L2
+06F8 DDF6       356       djnz R5, Delay_L3
+06FA            357       
+06FA 020651     358       ljmp forever
+06FD            359   
+06FD            360   EN

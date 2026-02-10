@@ -1,4 +1,4 @@
-; Project 1
+\; Project 1
 ; CV-8052 microcontroller in DE10-Lite board
 ;-------------------------------------------------------------------------------
 ; Reset vector
@@ -72,15 +72,19 @@ Cursor_Idx: ds 1
 
 ; These hold the TEXT (ASCII) safely
 ; Digits Only + Null Terminator, got rid of C,:, and s 
-Buf_Soak_Temp: ds 4   
-Buf_Soak_Time: ds 5   
-Buf_Refl_Temp: ds 4   
-Buf_Refl_Time: ds 5
 
 ; Buzzer state
 beep_count:  ds 1      ; remaining beeps
 beep_state:  ds 1      ; 0=idle, 1=ON, 2=OFF
 beep_tmr:    ds 2      ; 16-bit ms timer (needs to reach 500)
+
+iseg at 0x80
+Buf_Soak_Temp: ds 4   
+Buf_Soak_Time: ds 5   
+Buf_Refl_Temp: ds 4   
+Buf_Refl_Time: ds 5
+
+
 
 ; 46d bytes used
 
@@ -176,6 +180,8 @@ COL1 equ P2.2
 COL2 equ P2.4
 COL3 equ P2.6
 COL4 equ P3.0
+
+COLD_JUNCTION_TEMP equ 20
 
 ;                     1234567890123456 <-- 16 characters per line LCD
 Initial_Message:  db 'initial message', 0
@@ -881,9 +887,9 @@ Safety_TC_Done:
     pop  acc
     ret
 
-;============================================================
-; Buzzer Beep time functions
-;============================================================
+; ============================================================
+; BUZZER STARTUP FUNCTIONS
+; ============================================================
 
 Beep_Once:
     mov beep_count, #1
@@ -895,12 +901,15 @@ Beep_Five:
 
 Beep_Ten:
     mov beep_count, #10
+    sjmp Beep_Start      ; [FIX] Added explicit jump for safety
 
 Beep_Start:
-    mov beep_state, #1
-    mov beep_tmr, #0
-    mov beep_tmr+1, #0
-    setb TR0            ; start 2kHz tone
+    clr TR0              ; [FIX] Stop timer briefly to reset cleanly
+    mov beep_state, #1   ; Set State to ON
+    mov beep_tmr, #0     ; Reset Timer High Byte
+    mov beep_tmr+1, #0   ; Reset Timer Low Byte
+    setb ET0             ; [FIX] Ensure Interrupt is enabled
+    setb TR0             ; START the 2kHz tone
     ret
 ;============================================================
 
@@ -927,27 +936,27 @@ Beep_Task:
     inc beep_tmr+1
 
 Beep_Check:
-    ; check if timer == 500 (0x01F4)
-    mov a, beep_tmr
-    cjne a, #0F4h, Beep_Done
+    ; [FIX] FUZZY TIMER CHECK
+    ; Check if High Byte is non-zero (Time >= 256ms)
     mov a, beep_tmr+1
-    cjne a, #01h, Beep_Done
+    jz Beep_Done        ; If 0, keep beeping
 
-    ; reached 500ms -> reset timer
-    mov beep_tmr, #0
+    ; --- Time Limit Reached ---
+    mov beep_tmr, #0    ; Reset timer
     mov beep_tmr+1, #0
 
     mov a, beep_state
     cjne a, #1, Beep_Off_State
 
-; ---- ON finished -> go OFF ----
-    clr TR0
-    mov beep_state, #2
+    ; State was 1 (ON) -> Turn OFF
+    clr TR0             ; Hardware Silence
+    mov beep_state, #2  ; Set State to OFF (Pause)
     ret
 
 Beep_Off_State:
 ; ---- OFF finished -> decrement count / next ON ----
     dec beep_count
+    mov a, beep_count
     jz  Beep_Stop
 
     mov beep_state, #1
@@ -1011,25 +1020,39 @@ Control_FSM_state1_ret:
 ; --- STATE 2: RAMP TO SOAK ---
 Control_FSM_state2_a:
     inc Control_FSM_state
+    mov a, Control_FSM_state   ; [FIX] RELOAD 'A' so it matches the new state!
     setb state_change_signal
-	lcall Beep_Once
+    lcall Beep_Once
+    
+    ; [FIX] CLEAR FLAG ON ENTRY
+    ; Force the system to wait for at least one fresh temp reading
+    ; before deciding we are done.
+    clr soak_temp_reached      
+
 Control_FSM_state2:
     cjne a, #2, Control_FSM_state3
     jnb PB2_flag, State2_Check
     clr PB2_flag
     ljmp Control_FSM_state6_a ; Pause
+
 State2_Check:
     jnb soak_temp_reached, State2_Ret
+    
+    ; --- We reached Temp! Move to State 3 ---
     clr soak_temp_reached
     inc Control_FSM_state
+    
+    ; [FIX] RELOAD 'A' (Good practice)
+    mov a, Control_FSM_state   
+    
     setb state_change_signal
-	lcall Beep_Once
+    lcall Beep_Once
+    
     mov current_time_sec, #0
     mov current_time_minute, #0
     
-    ; --- ADD THIS LINE ---
-    clr soak_time_reached  ; Ensure we start fresh!
-    ; ---------------------
+    ; Ensure we start State 3 fresh
+    clr soak_time_reached 
 
 State2_Ret:
     ret
@@ -1217,6 +1240,18 @@ Reset_Delay_Inner:
     ; Set bit
     setb tc_startup_window
 
+    ; --------------------------------------
+    ; [FIX] ADD THIS BLOCK TO STOP STARTUP BEEP
+    ; --------------------------------------
+    mov beep_state, #0
+    mov beep_count, #0
+    mov beep_tmr, #0
+    mov beep_tmr+1, #0
+    clr one_ms_beep_flag
+    clr TR0              ; Force buzzer hardware OFF
+    ; --------------------------------------
+
+
     lcall Timer0_Init
     lcall Timer2_Init
     lcall ELCD_4BIT
@@ -1282,6 +1317,10 @@ loop:
     ; Update the LCD display based on the current state
     lcall LCD_Display_Update_func
 
+    jnb one_ms_pwm_flag, Skip_Beep_Sync
+    setb one_ms_beep_flag  ; Give the buzzer its own copy of the time tick
+
+Skip_Beep_Sync:
     ; Update the pwm output for the ssr
     lcall PWM_Wave 
 	; Update the Buzzer 
@@ -1775,8 +1814,9 @@ Draw_Time_Format:
     mov A, @R0
     lcall ?WriteData
     ; Unit
-    mov A, #'s'
-    lcall ?WriteData
+    ;got rid of the "s"
+    ;mov A, #'s'
+    ;lcall ?WriteData
     sjmp Restore_Cursor
 
 ; --- Restore Cursor Position ---
@@ -1870,28 +1910,37 @@ Get_Buf_4:
 Wait_For_P1_0_Release:
     jnb P1.0, $    ; Wait here while the button is still pressed (0)
     ret
-    
-    
+
 ; ================================================================
-; MODULE: THERMOCOUPLE ADC DRIVER
+; MODULE: THERMOCOUPLE ADC DRIVER (WITH NOISE SUPPRESSION & JUMP FIX)
 ; ================================================================
 Read_Thermocouple:
-    ; 1. Check Non-Blocking Timer (Run once every 25ms)
+    ; 1. Check Non-Blocking Timer
     lcall Wait_25ms
-    jnc Read_TC_Exit ; If 25ms hasn't passed, exit immediately
     
+    ; [FIX] TRAMPOLINE JUMP
+    ; "jnc" cannot jump to the end because the code is too long.
+    ; We invert logic: If Carry=1 (Time is up), Jump NEARBY.
+    jc Proceed_Reading
+    ret  ; If Carry=0, Return immediately.
+
+Proceed_Reading:
     ; --- 25ms Passed! Time to Read ---
-    
+
+    ; [FIX] SILENCE THE BUZZER (Noise Suppression)
+    ; Save buzzer state and force it OFF during the sensitive read
+    mov A, TCON      
+    anl A, #0x10     ; Isolate TR0 bit
+    push acc         ; Save it
+    clr TR0          ; STOP NOISE
+
     ; 2. Initialize / Trigger ADC
-    ; Writing to ADC_C (0xA1) triggers the conversion
-    mov ADC_C, #0x80    ; Reset / Strobe
+    mov ADC_C, #0x80    ; Reset
     nop
     nop
-    mov ADC_C, #0x00    ; Select Channel 0 (ADCINPUT 0) and Start
+    mov ADC_C, #0x00    ; Start Channel 0
     
-    ; 3. [FIX] Settle Delay
-    ; The DE10-Lite ADC bridge needs time to fetch data from the MAX10 chip.
-    ; We burn ~500 cycles to be absolutely safe.
+    ; 3. Settle Delay
     mov R5, #250
 ADC_Settle_Loop:
     nop
@@ -1899,37 +1948,47 @@ ADC_Settle_Loop:
     djnz R5, ADC_Settle_Loop
     
     ; 4. Read Raw Data
-    mov x+0, ADC_L      ; Read Low Byte (0xA2)
-    mov x+1, ADC_H      ; Read High Byte (0xA3)
+    mov x+0, ADC_L
+    mov x+1, ADC_H
     mov x+2, #0
     mov x+3, #0
     
-    ; 5. [FIX] Mask the 12-bit Data
-    ; The ADC is 12-bit. We MUST zero out the upper 4 bits of the High Byte
-    ; or the math below will overflow and return 0.
+    ; 5. Mask Data
     mov a, x+1
     anl a, #0x0F
     mov x+1, a
     
-    ; 6. Convert to Voltage (Count * 5000 / 4095)
-    Load_y(5000)        ; Vref = 5000mV
-    lcall mul32         
+    ; [FIX] RESTORE THE BUZZER
+    pop acc          ; Get previous state
+    jz Skip_Restore  ; If it was OFF, keep it OFF
+    setb TR0         ; If it was ON, turn it back ON
+Skip_Restore:
+
+    ; 6. Math Conversions
+    Load_y(4118)
+    lcall mul32       
+
+    mov ADC_C, #0x04    ; Read LM4040
+    mov y+0, ADC_L      
+    mov y+1, ADC_H      
+    mov y+2, #0
+    mov y+3, #0
+    mov ADC_C, #0x00    ; Reset
     
-    Load_y(4095)        ; 12-bit resolution
     lcall div32         
+    Load_Y(100)
+    lcall mul32
+    Load_y(1267)        
+    lcall div32    
+    Load_y(COLD_JUNCTION_TEMP)
+    lcall add32     
     
-    ; 7. Convert to Temp (Voltage / 10mV) -> e.g. 250mV / 10 = 25C
-    ; Change this Load_y value if your amp gain is different!
-    Load_y(10)          
-    lcall div32         
-    
-    ; 8. Store Final Result
+    ; 8. Store Result
     mov current_temp+0, x+0
     mov current_temp+1, x+1
     mov current_temp+2, x+2
     mov current_temp+3, x+3
 
-Read_TC_Exit:
     ret
     
 ; ================================================================
