@@ -1785,7 +1785,6 @@ Control_FSM_state0_a:
 	ret
 Control_FSM_state0:
     cjne a, #0, Control_FSM_state1
-    clr beep_error_done
     jnb PB0_flag, Control_FSM_state0_ret  ; Check flag
     clr PB0_flag                 
     sjmp Control_FSM_state1_a
