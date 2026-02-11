@@ -1675,6 +1675,9 @@ Safety_Logic_Proceed:
     
     ; Force UI to State 0 (Home Screen)
     mov Current_State, #0
+
+    ; Beep alarm
+    lcall Beep_Ten
     
     ; Trigger Screen Refresh
     setb state_change_signal          ; Tell loop to redraw "Welcome"
@@ -1701,14 +1704,6 @@ Safety_TC_Done:
 Beep_Judge:
     push acc
     push psw
-
-    ; --- Priority 1: Error condition (highest priority) ---
-    jnb tc_missing_abort, Beep_Judge_Check_State6
-    ; Error detected - beep 10 times (only once per error)
-    jb beep_error_done, Beep_Judge_Done   ; Already beeped for this error?
-    setb beep_error_done                   ; Mark as handled
-    lcall Beep_Ten
-    sjmp Beep_Judge_Done
 
 Beep_Judge_Check_State6:
     ; --- Priority 2: Entering State 6 (finished) ---
@@ -1812,6 +1807,12 @@ Beep_Done:
 ; Main Control FSM for the entire process
 ;-------------------------------------------------------------------------------;
 Control_FSM:
+    ; Check abort first
+    jnb stop_signal, Control_FSM_normal
+    clr stop_signal
+    ljmp Control_FSM_state0_a    ; Clean transition to state 0
+    
+Control_FSM_normal:
     mov a, Control_FSM_state
     sjmp Control_FSM_state0
 
@@ -1851,6 +1852,8 @@ Control_FSM_state2_a:
 	setb state_change_signal_TC
 	setb state_change_signal_Count
     setb state_change_beep_signal
+    setb tc_startup_window 
+    clr tc_missing_abort
     clr soak_temp_reached
 	ret
 Control_FSM_state2:
@@ -3372,7 +3375,7 @@ Reset_Delay_Inner:
 
     ; P3: Col4(In)
     ; P3.0 (Col4) is In (0).
-    mov P3MOD, #01000000B
+    mov P3MOD, #01011100B
     mov P4MOD, #00000001B
 
     ; Turn off all the LEDs
