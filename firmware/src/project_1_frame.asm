@@ -544,13 +544,13 @@ chk_RUN:
     cjne A, #'1', chk_RUN_zero
     
     ; RUN:1 - Start the process
-    ljmp Control_FSM_state2_a
+    lcall Control_FSM_state2_a
     sjmp spl_done_bridge3
 
 chk_RUN_zero:
     cjne A, #'0', spl_done_bridge3
     ; RUN:0 - Stop the process
-    ljmp Control_FSM_state0_a
+    lcall Control_FSM_state0_a
     sjmp spl_done_bridge3
 
 spl_done_bridge3:
@@ -998,6 +998,7 @@ LCD_Update_Temp_Value:
 LCD_Done:
     pop acc
     ret
+
 ;-------------------------------------------------------------------------------;
 ; screen update 
 ;-------------------------------------------------------------------------------;
