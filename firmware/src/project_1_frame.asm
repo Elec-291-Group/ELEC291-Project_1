@@ -235,7 +235,7 @@ SERVO_PERIOD   EQU 20 ; pwm signal period for the servo motor (20 ms)
 SERVO_0        EQU 1 ; pwm high time for the servo motor to stay at 0 degree
 SERVO_180      EQU 2 ; pwm high time for the servo motor to stay at 180 degrees
 
-COLD_JUNCTION_TEMP equ 20
+COLD_JUNCTION_TEMP equ 22
 MAX_POWER	   EQU 1500 ; max oven power
 NO_POWER	   EQU 0    ; no power
 BASE_POWER     EQU (MAX_POWER/5) ; 20% base power for state 2, 4
