@@ -423,7 +423,6 @@ S_BAD:
     ljmp spl_done
 S_GO:
     inc R0
-    setb remote_config_mode
     mov R1, #Buf_Soak_Temp
     lcall Copy3DigitsToBuf
     ljmp spl_done
@@ -446,7 +445,6 @@ K_BAD:
     ljmp spl_done
 K_GO:
     inc R0
-    setb remote_config_mode
     mov R1, #Buf_Soak_Time
     lcall Copy4DigitsToBuf
     ljmp spl_done
@@ -469,7 +467,6 @@ R_BAD:
     ljmp spl_done
 R_GO:
     inc R0
-    setb remote_config_mode
     mov R1, #Buf_Refl_Temp
     lcall Copy3DigitsToBuf
     ljmp spl_done
@@ -493,7 +490,6 @@ L_BAD:
 L_GO:
     inc R0
     mov R1, #Buf_Refl_Time
-    setb remote_config_mode
     lcall Copy4DigitsToBuf
     ljmp spl_done
 
@@ -1712,6 +1708,7 @@ Reset_Delay_Inner:
     clr cooling_temp_reached
     clr state_change_signal
     clr one_millisecond_flag_servo
+    clr remote_config_mode
     
     setb state_change_signal
 
@@ -1762,7 +1759,7 @@ Full_Reset_Check_Done:
     ; FREEZE CONTROL LOGIC DURING REMOTE CONFIG
     ; (prevents speaker, FSM jumps, timers, etc.)
     ; =========================================================
-    jb remote_config_mode, Remote_Config_Loop
+    ; jb remote_config_mode, Remote_Config_Loop
 
     ; ---------------------------------------------------------
     ; NORMAL RUN LOGIC

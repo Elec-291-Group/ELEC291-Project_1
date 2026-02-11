@@ -540,7 +540,11 @@ CFG_BAD4:
 
 CFG_APPLY:
     lcall Update_FSM_Variables
+    clr  remote_config_mode
+    setb state_change_signal   ; force LCD redraw
+    ; optional: lcall Update_Screen_Full  ; if you want parameter page redraw instantly
     ljmp spl_done
+
 
 ; ---------------- RUN:0 / RUN:1 ----------------
 chk_RUN:
@@ -584,13 +588,16 @@ RUN_NOT1:
     ljmp run_zero
 
 RUN_1:
-    mov Control_FSM_state, #2
+    clr  remote_config_mode
+    mov Control_FSM_state, #0
+    mov Current_State, #0
     mov current_time_sec, #0
     mov current_time_minute, #0
     setb state_change_signal
     setb tc_startup_window
     clr  tc_missing_abort
     ljmp spl_done
+
 
 run_zero:
     cjne A, #'0', RUN_BAD5
@@ -1755,7 +1762,7 @@ Full_Reset_Check_Done:
     ; FREEZE CONTROL LOGIC DURING REMOTE CONFIG
     ; (prevents speaker, FSM jumps, timers, etc.)
     ; =========================================================
-    jb remote_config_mode, Remote_Config_Mode
+    jb remote_config_mode, Remote_Config_Loop
 
     ; ---------------------------------------------------------
     ; NORMAL RUN LOGIC
@@ -1823,18 +1830,23 @@ Skip_Beep_Sync:
     ljmp loop
 
 
-; ---------------------------------------------------------
-; REMOTE CONFIG MODE: keep LCD alive, but silence everything
-; ---------------------------------------------------------
-Remote_Config_Mode:
-    ; HARD silence + heater off while editing
+Remote_Config_Loop:
+    ; silence outputs
     clr TR0
     clr PWM_OUT
 
-    ; still update LCD so it doesn't blank/flash
-    lcall LCD_Display_Update_func
-
+    ; still allow UI navigation / redraw
+    lcall Check_Buttons
+    lcall Check_Keypad
+    ; Only redraw when something changed (optional but recommended)
+    jb state_change_signal, RC_REDRAW
+    sjmp RC_DONE
+RC_REDRAW:
+    clr state_change_signal
+    lcall Update_Screen_Full
+RC_DONE:
     ljmp loop
+
 ;-------------------------------------------------------------------------------;
 
 ; ================================================================
