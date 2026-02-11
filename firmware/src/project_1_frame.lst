@@ -3791,273 +3791,273 @@
 1637 22        3207       RET
 1638           3208   
 1638           3209   delayHalfSec:
-1638 7A7D      3210            mov     R2, #125
+1638 7A32      3210            mov     R2, #50
 163A 12163E    3211            lcall WaitmilliSec
-163D           3212            ;lcall WaitmilliSec
-163D 22        3213            ret
-163E           3214   
-163E           3215   ;---------------------------------;
-163E           3216   ; Wait 'R2' milliseconds, blocking;
-163E           3217   ;---------------------------------;
-163E           3218   WaitmilliSec:
-163E C000      3219       push AR0
-1640 C001      3220       push AR1
-1642 7928      3221   loop3: mov R1, #40
-1644 7868      3222   loop2: mov R0, #104
-1646 D8FE      3223   loop1: djnz R0, loop1 ; 4 cycles->4*60.24ns*104=25.0us
-1648 D9FA      3224       djnz R1, loop2 ; 25us*40=1.0ms
-164A DAF6      3225       djnz R2, loop3 ; number of millisecons to wait passed in R2
-164C D001      3226       pop AR1
-164E D000      3227       pop AR0
-1650 22        3228       ret
-1651           3229   ;-------------------------------------------------------------------------------
-1651           3230   
-1651           3231   ;------------------------------------------------------------------------------
-1651           3232   ; dc_control
-1651           3233   ; turns on the dc motor in cooling stage
-1651           3234   ;------------------------------------------------------------------------------
-1651           3235   dc_control:
-1651 E560      3236       mov a, Control_FSM_state
-1653           3237            
-1653           3238            ; handle state 0
-1653 B40004    3239            cjne a, #0, dc_state1
-1656 C2C0      3240            clr DC_OUT
-1658 802C      3241       sjmp dc_control_done
-165A           3242   
-165A           3243            ; handle state 1
-165A           3244            dc_state1:
-165A B40104    3245            cjne a, #1, dc_state2
-165D C2C0      3246            clr DC_OUT
-165F 8025      3247       sjmp dc_control_done
-1661           3248   
-1661           3249            ; handle state 2
-1661           3250            dc_state2:
-1661 B40204    3251            cjne a, #2, dc_state3
-1664 C2C0      3252            clr DC_OUT
-1666 801E      3253       sjmp dc_control_done
-1668           3254   
-1668           3255            ; handle state 3
-1668           3256            dc_state3:
-1668 B40304    3257            cjne a, #3, dc_state4
-166B C2C0      3258            clr DC_OUT
-166D 8017      3259       sjmp dc_control_done
-166F           3260   
-166F           3261            ; handle state 4
-166F           3262            dc_state4:
-166F B40404    3263            cjne a, #4, dc_state5
-1672 C2C0      3264            clr DC_OUT
-1674 8010      3265       sjmp dc_control_done
-1676           3266   
-1676           3267            ; handle state 5
-1676           3268            dc_state5:
-1676 B40504    3269            cjne a, #5, dc_state6
-1679 C2C0      3270            clr DC_OUT
-167B 8009      3271       sjmp dc_control_done
-167D           3272   
-167D           3273            ; handle state 6
-167D           3274            dc_state6:
-167D B40604    3275       cjne a, #6, dc_state7
-1680 D2C0      3276            setb DC_OUT
-1682 8002      3277       sjmp dc_control_done
-1684           3278   
-1684           3279            ; handle state 7
-1684           3280            dc_state7:
-1684 C2C0      3281            clr DC_OUT  
-1686           3282   
-1686           3283   dc_control_done:
-1686 22        3284       ret
-1687           3285   
-1687           3286   ;-------------------------------------------------------------------------------;
-1687           3287   ;         Main program.          
-1687           3288   ;-------------------------------------------------------------------------------;
-1687           3289   main:
-1687           3290   
-1687           3291       ; --------------------------------------------------------
-1687           3292       ; 1. SAFETY SHUTDOWN
-1687           3293       ; --------------------------------------------------------
-1687 C2AF      3294       clr EA              ; FORCE Interrupts OFF immediately
-1689 7581C0    3295       mov SP, #0xC0       ; Reset Stack Pointer to safe location
-168C           3296       
-168C           3297       ; --------------------------------------------------------
-168C           3298       ; THE "DIRTY DELAY" (Fixes Reset Garbage)
-168C           3299       ; We burn ~100ms here using a raw loop. 
-168C           3300       ; We cannot use timers yet because they aren't initialized.
-168C           3301       ; --------------------------------------------------------
-168C 78FA      3302       mov R0, #250
-168E           3303   Reset_Delay_Outer:
-168E 79FF      3304       mov R1, #255
-1690           3305   Reset_Delay_Inner:
-1690 D9FE      3306       djnz R1, Reset_Delay_Inner
-1692 D8FA      3307       djnz R0, Reset_Delay_Outer
-1694           3308       
-1694           3309       ; --- PORT CONFIGURATION ---
-1694 759AAA    3310       mov P0MOD, #0xAA
-1697           3311       ; P1: Mixed usage 
-1697           3312       ; P1.7(LCD_RS), P1.6(Row3), P1.5(Sound), P1.4(Row2)
-1697           3313       ; P1.3(PWM), P1.2(Row1), P1.1(LCD_E) -> All Outputs
-1697           3314       ; P1.0 (Unused/RX) -> Input
-1697           3315       ; Binary: 11111110 -> Hex: 0xFE
-1697 759BFE    3316       mov P1MOD, #0xFE
-169A           3317   
-169A           3318       ; P2: Row4(Out), Cols(In)
-169A           3319       ; P2.0 (Row4) is Out (1). P2.2, P2.4, P2.6 (Cols) are In (0).
-169A           3320       ; Binary: 00000001 -> Hex: 0x01
-169A 759C01    3321       mov P2MOD, #0x01
-169D           3322   
-169D           3323       ; P3: Col4(In)
-169D           3324       ; P3.0 (Col4) is In (0).
-169D 759D00    3325       mov P3MOD, #0x00
-16A0 75C101    3326       mov P4MOD, #00000001B
-16A3           3327   
-16A3           3328       ; Turn off all the LEDs
-16A3 75E800    3329       mov LEDRA, #0 ; LEDRA is bit addressable
-16A6 759500    3330       mov LEDRB, #0 ; LEDRB is NOT bit addresable
-16A9           3331   
-16A9           3332       ; Enable Global interrupts
-16A9 D2AF      3333       setb EA  
-16AB           3334   
-16AB           3335            ; FSM initial states
-16AB 757000    3336            mov SEC_FSM_state, #0
-16AE 756000    3337            mov Control_FSM_state, #0
-16B1 756100    3338            mov Current_State, #0
-16B4           3339            ; FSM timers initialization
-16B4 756F00    3340            mov SEC_FSM_timer, #0
-16B7           3341            ; time counters initialization
-16B7 753000    3342            mov current_time_sec, #0
-16BA 753100    3343            mov current_time_minute, #0
-16BD 753200    3344            mov soak_time_sec, #0
-16C0 753300    3345            mov soak_time_minute, #0
-16C3 753400    3346            mov reflow_time_sec, #0
-16C6 753500    3347            mov reflow_time_minute, #0
-16C9 753600    3348            mov soak_end_time_sec, #0
-16CC 753700    3349            mov soak_end_time_minute, #0
-16CF 753800    3350            mov reflow_end_time_sec, #0
-16D2 753900    3351            mov reflow_end_time_minute, #0
-16D5           3352       ; Initialize counter to zero
-16D5 755C00    3353       mov pwm_counter, #0
-16D8 755D00    3354       mov pwm_counter+1, #0
-16DB 755E00    3355       mov pwm_counter+2, #0
-16DE 755F00    3356       mov pwm_counter+3, #0
-16E1           3357       ; Initialize power output
-16E1 755B00    3358       mov power_output+3, #0
-16E4 755A00    3359       mov power_output+2, #0
-16E7 755902    3360       mov power_output+1, #02H
-16EA 7558EE    3361       mov power_output, #0EEH ; (initilize to 750 for testing)
-16ED           3362            ; FSM Buttons push button init
-16ED 757200    3363            mov     PB0_DEB_state, #0
-16F0 757400    3364            mov     PB2_DEB_state, #0
-16F3 757100    3365            mov     PB0_DEB_timer, #0
-16F6 757300    3366            mov     PB2_DEB_timer, #0
-16F9           3367       ; [FIX] ADD THIS BLOCK TO STOP STARTUP BEEP
-16F9 757600    3368       mov beep_state, #0
-16FC 757500    3369       mov beep_count, #0
-16FF 757700    3370       mov beep_tmr, #0
-1702 757800    3371       mov beep_tmr+1, #0
-1705           3372       ; Buttons 
-1705 757A00    3373       mov BTN_DEB_state, #0
-1708 757B00    3374       mov BTN_DEB_timer, #0
-170B 757C00    3375       mov BTN_DEB_id, #0
-170E 757900    3376       mov servo_pwm_counter, #0
-1711 757D00    3377       mov rx_idx, #0
-1714 757E00    3378       mov rx_ready, #0
-1717 C218      3379       clr one_ms_beep_flag
-1719 C28C      3380       clr TR0 ; Force buzzer hardware OFF
-171B           3381   
-171B           3382            ; Clear all the flags
-171B C295      3383            clr SOUND_OUT
-171D C219      3384       clr beep_error_done
-171F C213      3385            clr tc_missing_abort
-1721 C20B      3386            clr stop_signal
-1723 C215      3387            clr PB0_flag
-1725 C216      3388            clr PB1_flag
-1727 C217      3389            clr PB2_flag
-1729 C201      3390            clr one_second_flag
-172B C204      3391            clr one_second_lcd_flag
-172D C20E      3392            clr config_finish_signal
-172F C20D      3393       clr time_count_doing_signal
-1731 C224      3394       clr fullscreen_update_signal
-1733 C205      3395            clr soak_temp_reached
-1735 C208      3396            clr soak_time_reached
-1737 C206      3397            clr reflow_temp_reached
-1739 C209      3398            clr reflow_time_reached
-173B C207      3399            clr cooling_temp_reached
-173D C210      3400       clr state_change_signal_TC
-173F C211      3401            clr state_change_signal_Count
-1741 C212      3402       clr state_change_beep_signal
-1743 C226      3403       clr one_millisecond_flag_servo
-1745 C229      3404       clr remote_config_mode
-1747 C2C0      3405       clr DC_OUT
-1749           3406       ; Set bit
-1749 D20F      3407            setb state_change_signal
-174B D214      3408       setb tc_startup_window
-174D           3409   
-174D 12045D    3410       lcall Timer0_Init
-1750 1206A6    3411       lcall Timer2_Init
-1753 120779    3412       lcall ELCD_4BIT
-1756           3413       ;----- Two new lines I added to initialize the UI
-1756 1211BD    3414       lcall Init_All_Buffers
-1759 120477    3415       lcall Initialize_Serial_Port
-175C 121550    3416       lcall music
-175F           3417   ;-------------------------------------------------------------------------------;
-175F           3418   ; while(1) loop
-175F           3419   ;-------------------------------------------------------------------------------;
-175F           3420   loop:
-175F           3421   
-175F 120BC4    3422            lcall SEC_FSM
-1762           3423   
-1762           3424            ; Check the FSM for the overall control flow of the reflow process
-1762 120E73    3425       lcall Control_FSM
-1765           3426   
-1765           3427       ; Check the FSM for PB01 debounce
-1765 120B56    3428       lcall PB0_DEB
-1768 120B8E    3429            lcall PB2_DEB
-176B           3430       
-176B           3431       ; Added to take temp readings
-176B 121210    3432       lcall Read_Thermocouple
-176E           3433       
-176E           3434       ; 1. Check if we reached temp (Observer)
-176E 120CAF    3435       lcall Temp_Compare
-1771           3436       
-1771           3437       ; 2. Decide heater power based on flags (Driver)
-1771           3438       ;lcall Power_Control
-1771 1213A3    3439       lcall proportional_power_control
-1774           3440       
-1774 120DA0    3441       lcall Safety_Check_TC
-1777           3442   
-1777 120C20    3443            lcall Time_Counter
-177A           3444   
-177A           3445            ; Update Variables (times and temp)
-177A 120F4E    3446            lcall Update_FSM_Variables
-177D           3447   
-177D           3448       ; GUI Interface polling uart port
-177D 1204AC    3449       lcall Serial_RX_Pump
-1780 120505    3450       lcall Serial_Process_Line
-1783           3451   
-1783           3452            ; Update while at state 1
-1783           3453            ; LCD
-1783 120A02    3454            lcall Update_Screen_Full 
-1786           3455            ; Buttons
-1786 120FD2    3456            lcall Check_Buttons 
-1789           3457            ; PB0pad
-1789 121091    3458       lcall Check_Keypad
-178C           3459   
-178C           3460       ; Update the LCD display based on the current state
-178C 12083E    3461       lcall LCD_Display_Update_func
-178F           3462   
-178F 120C42    3463            lcall Time_Compare_MMSS
-1792           3464   
-1792           3465       ; Update the pwm output for the ssr
-1792 120D29    3466       lcall PWM_Wave 
-1795           3467            ; Update the Buzzer 
-1795 120E3A    3468            lcall Beep_Task
-1798           3469       ; Update the pwm output for the servo
-1798 1212E5    3470       lcall call_servo_control
-179B           3471   
-179B 120DF1    3472       lcall Beep_Judge
-179E           3473   
-179E 121651    3474       lcall dc_control
-17A1           3475   
-17A1           3476       ; After initialization the program stays in this 'forever' loop
-17A1 02175F    3477       ljmp loop
-17A4           3478   ;-------------------------------------------------------------------------------;
-17A4           3479   END
+163D 22        3212            ret
+163E           3213   
+163E           3214   ;---------------------------------;
+163E           3215   ; Wait 'R2' milliseconds, blocking;
+163E           3216   ;---------------------------------;
+163E           3217   WaitmilliSec:
+163E C000      3218       push AR0
+1640 C001      3219       push AR1
+1642 7928      3220   loop3: mov R1, #40
+1644 7868      3221   loop2: mov R0, #104
+1646 D8FE      3222   loop1: djnz R0, loop1 ; 4 cycles->4*60.24ns*104=25.0us
+1648 D9FA      3223       djnz R1, loop2 ; 25us*40=1.0ms
+164A DAF6      3224       djnz R2, loop3 ; number of millisecons to wait passed in R2
+164C D001      3225       pop AR1
+164E D000      3226       pop AR0
+1650 22        3227       ret
+1651           3228   ;-------------------------------------------------------------------------------
+1651           3229   
+1651           3230   ;------------------------------------------------------------------------------
+1651           3231   ; dc_control
+1651           3232   ; turns on the dc motor in cooling stage
+1651           3233   ;------------------------------------------------------------------------------
+1651           3234   dc_control:
+1651 E560      3235       mov a, Control_FSM_state
+1653           3236            
+1653           3237            ; handle state 0
+1653 B40004    3238            cjne a, #0, dc_state1
+1656 C2C0      3239            clr DC_OUT
+1658 802C      3240       sjmp dc_control_done
+165A           3241   
+165A           3242            ; handle state 1
+165A           3243            dc_state1:
+165A B40104    3244            cjne a, #1, dc_state2
+165D C2C0      3245            clr DC_OUT
+165F 8025      3246       sjmp dc_control_done
+1661           3247   
+1661           3248            ; handle state 2
+1661           3249            dc_state2:
+1661 B40204    3250            cjne a, #2, dc_state3
+1664 C2C0      3251            clr DC_OUT
+1666 801E      3252       sjmp dc_control_done
+1668           3253   
+1668           3254            ; handle state 3
+1668           3255            dc_state3:
+1668 B40304    3256            cjne a, #3, dc_state4
+166B C2C0      3257            clr DC_OUT
+166D 8017      3258       sjmp dc_control_done
+166F           3259   
+166F           3260            ; handle state 4
+166F           3261            dc_state4:
+166F B40404    3262            cjne a, #4, dc_state5
+1672 C2C0      3263            clr DC_OUT
+1674 8010      3264       sjmp dc_control_done
+1676           3265   
+1676           3266            ; handle state 5
+1676           3267            dc_state5:
+1676 B40504    3268            cjne a, #5, dc_state6
+1679 C2C0      3269            clr DC_OUT
+167B 8009      3270       sjmp dc_control_done
+167D           3271   
+167D           3272            ; handle state 6
+167D           3273            dc_state6:
+167D B40604    3274       cjne a, #6, dc_state7
+1680 D2C0      3275            setb DC_OUT
+1682 8002      3276       sjmp dc_control_done
+1684           3277   
+1684           3278            ; handle state 7
+1684           3279            dc_state7:
+1684 C2C0      3280            clr DC_OUT  
+1686           3281   
+1686           3282   dc_control_done:
+1686 22        3283       ret
+1687           3284   
+1687           3285   ;-------------------------------------------------------------------------------;
+1687           3286   ;         Main program.          
+1687           3287   ;-------------------------------------------------------------------------------;
+1687           3288   main:
+1687           3289   
+1687           3290       ; --------------------------------------------------------
+1687           3291       ; 1. SAFETY SHUTDOWN
+1687           3292       ; --------------------------------------------------------
+1687 C2AF      3293       clr EA              ; FORCE Interrupts OFF immediately
+1689 7581C0    3294       mov SP, #0xC0       ; Reset Stack Pointer to safe location
+168C           3295       
+168C           3296       ; --------------------------------------------------------
+168C           3297       ; THE "DIRTY DELAY" (Fixes Reset Garbage)
+168C           3298       ; We burn ~100ms here using a raw loop. 
+168C           3299       ; We cannot use timers yet because they aren't initialized.
+168C           3300       ; --------------------------------------------------------
+168C 78FA      3301       mov R0, #250
+168E           3302   Reset_Delay_Outer:
+168E 79FF      3303       mov R1, #255
+1690           3304   Reset_Delay_Inner:
+1690 D9FE      3305       djnz R1, Reset_Delay_Inner
+1692 D8FA      3306       djnz R0, Reset_Delay_Outer
+1694           3307       
+1694           3308       ; --- PORT CONFIGURATION ---
+1694 759AAA    3309       mov P0MOD, #0xAA
+1697           3310       ; P1: Mixed usage 
+1697           3311       ; P1.7(LCD_RS), P1.6(Row3), P1.5(Sound), P1.4(Row2)
+1697           3312       ; P1.3(PWM), P1.2(Row1), P1.1(LCD_E) -> All Outputs
+1697           3313       ; P1.0 (Unused/RX) -> Input
+1697           3314       ; Binary: 11111110 -> Hex: 0xFE
+1697 759BFE    3315       mov P1MOD, #0xFE
+169A           3316   
+169A           3317       ; P2: Row4(Out), Cols(In)
+169A           3318       ; P2.0 (Row4) is Out (1). P2.2, P2.4, P2.6 (Cols) are In (0).
+169A           3319       ; Binary: 00000001 -> Hex: 0x01
+169A 759C01    3320       mov P2MOD, #0x01
+169D           3321   
+169D           3322       ; P3: Col4(In)
+169D           3323       ; P3.0 (Col4) is In (0).
+169D 759D00    3324       mov P3MOD, #0x00
+16A0 75C101    3325       mov P4MOD, #00000001B
+16A3           3326   
+16A3           3327       ; Turn off all the LEDs
+16A3 75E800    3328       mov LEDRA, #0 ; LEDRA is bit addressable
+16A6 759500    3329       mov LEDRB, #0 ; LEDRB is NOT bit addresable
+16A9           3330   
+16A9           3331       ; Enable Global interrupts
+16A9 D2AF      3332       setb EA  
+16AB           3333   
+16AB           3334            ; FSM initial states
+16AB 757000    3335            mov SEC_FSM_state, #0
+16AE 756000    3336            mov Control_FSM_state, #0
+16B1 756100    3337            mov Current_State, #0
+16B4           3338            ; FSM timers initialization
+16B4 756F00    3339            mov SEC_FSM_timer, #0
+16B7           3340            ; time counters initialization
+16B7 753000    3341            mov current_time_sec, #0
+16BA 753100    3342            mov current_time_minute, #0
+16BD 753200    3343            mov soak_time_sec, #0
+16C0 753300    3344            mov soak_time_minute, #0
+16C3 753400    3345            mov reflow_time_sec, #0
+16C6 753500    3346            mov reflow_time_minute, #0
+16C9 753600    3347            mov soak_end_time_sec, #0
+16CC 753700    3348            mov soak_end_time_minute, #0
+16CF 753800    3349            mov reflow_end_time_sec, #0
+16D2 753900    3350            mov reflow_end_time_minute, #0
+16D5           3351       ; Initialize counter to zero
+16D5 755C00    3352       mov pwm_counter, #0
+16D8 755D00    3353       mov pwm_counter+1, #0
+16DB 755E00    3354       mov pwm_counter+2, #0
+16DE 755F00    3355       mov pwm_counter+3, #0
+16E1           3356       ; Initialize power output
+16E1 755B00    3357       mov power_output+3, #0
+16E4 755A00    3358       mov power_output+2, #0
+16E7 755902    3359       mov power_output+1, #02H
+16EA 7558EE    3360       mov power_output, #0EEH ; (initilize to 750 for testing)
+16ED           3361            ; FSM Buttons push button init
+16ED 757200    3362            mov     PB0_DEB_state, #0
+16F0 757400    3363            mov     PB2_DEB_state, #0
+16F3 757100    3364            mov     PB0_DEB_timer, #0
+16F6 757300    3365            mov     PB2_DEB_timer, #0
+16F9           3366       ; [FIX] ADD THIS BLOCK TO STOP STARTUP BEEP
+16F9 757600    3367       mov beep_state, #0
+16FC 757500    3368       mov beep_count, #0
+16FF 757700    3369       mov beep_tmr, #0
+1702 757800    3370       mov beep_tmr+1, #0
+1705           3371       ; Buttons 
+1705 757A00    3372       mov BTN_DEB_state, #0
+1708 757B00    3373       mov BTN_DEB_timer, #0
+170B 757C00    3374       mov BTN_DEB_id, #0
+170E 757900    3375       mov servo_pwm_counter, #0
+1711 757D00    3376       mov rx_idx, #0
+1714 757E00    3377       mov rx_ready, #0
+1717 C218      3378       clr one_ms_beep_flag
+1719 C28C      3379       clr TR0 ; Force buzzer hardware OFF
+171B           3380   
+171B           3381            ; Clear all the flags
+171B C295      3382            clr SOUND_OUT
+171D C219      3383       clr beep_error_done
+171F C213      3384            clr tc_missing_abort
+1721 C20B      3385            clr stop_signal
+1723 C215      3386            clr PB0_flag
+1725 C216      3387            clr PB1_flag
+1727 C217      3388            clr PB2_flag
+1729 C201      3389            clr one_second_flag
+172B C204      3390            clr one_second_lcd_flag
+172D C20E      3391            clr config_finish_signal
+172F C20D      3392       clr time_count_doing_signal
+1731 C224      3393       clr fullscreen_update_signal
+1733 C205      3394            clr soak_temp_reached
+1735 C208      3395            clr soak_time_reached
+1737 C206      3396            clr reflow_temp_reached
+1739 C209      3397            clr reflow_time_reached
+173B C207      3398            clr cooling_temp_reached
+173D C210      3399       clr state_change_signal_TC
+173F C211      3400            clr state_change_signal_Count
+1741 C212      3401       clr state_change_beep_signal
+1743 C226      3402       clr one_millisecond_flag_servo
+1745 C229      3403       clr remote_config_mode
+1747 C2C0      3404       clr DC_OUT
+1749           3405       ; Set bit
+1749 D20F      3406            setb state_change_signal
+174B D214      3407       setb tc_startup_window
+174D           3408   
+174D 120B11    3409       lcall Clear_Screen_Func
+1750 12045D    3410       lcall Timer0_Init
+1753 1206A6    3411       lcall Timer2_Init
+1756 120779    3412       lcall ELCD_4BIT
+1759           3413       ;----- Two new lines I added to initialize the UI
+1759 1211BD    3414       lcall Init_All_Buffers
+175C 120477    3415       lcall Initialize_Serial_Port
+175F 121550    3416       lcall music
+1762           3417   ;-------------------------------------------------------------------------------;
+1762           3418   ; while(1) loop
+1762           3419   ;-------------------------------------------------------------------------------;
+1762           3420   loop:
+1762           3421   
+1762 120BC4    3422            lcall SEC_FSM
+1765           3423   
+1765           3424            ; Check the FSM for the overall control flow of the reflow process
+1765 120E73    3425       lcall Control_FSM
+1768           3426   
+1768           3427       ; Check the FSM for PB01 debounce
+1768 120B56    3428       lcall PB0_DEB
+176B 120B8E    3429            lcall PB2_DEB
+176E           3430       
+176E           3431       ; Added to take temp readings
+176E 121210    3432       lcall Read_Thermocouple
+1771           3433       
+1771           3434       ; 1. Check if we reached temp (Observer)
+1771 120CAF    3435       lcall Temp_Compare
+1774           3436       
+1774           3437       ; 2. Decide heater power based on flags (Driver)
+1774           3438       ;lcall Power_Control
+1774 1213A3    3439       lcall proportional_power_control
+1777           3440       
+1777 120DA0    3441       lcall Safety_Check_TC
+177A           3442   
+177A 120C20    3443            lcall Time_Counter
+177D           3444   
+177D           3445            ; Update Variables (times and temp)
+177D 120F4E    3446            lcall Update_FSM_Variables
+1780           3447   
+1780           3448       ; GUI Interface polling uart port
+1780 1204AC    3449       lcall Serial_RX_Pump
+1783 120505    3450       lcall Serial_Process_Line
+1786           3451   
+1786           3452            ; Update while at state 1
+1786           3453            ; LCD
+1786 120A02    3454            lcall Update_Screen_Full 
+1789           3455            ; Buttons
+1789 120FD2    3456            lcall Check_Buttons 
+178C           3457            ; PB0pad
+178C 121091    3458       lcall Check_Keypad
+178F           3459   
+178F           3460       ; Update the LCD display based on the current state
+178F 12083E    3461       lcall LCD_Display_Update_func
+1792           3462   
+1792 120C42    3463            lcall Time_Compare_MMSS
+1795           3464   
+1795           3465       ; Update the pwm output for the ssr
+1795 120D29    3466       lcall PWM_Wave 
+1798           3467            ; Update the Buzzer 
+1798 120E3A    3468            lcall Beep_Task
+179B           3469       ; Update the pwm output for the servo
+179B 1212E5    3470       lcall call_servo_control
+179E           3471   
+179E 120DF1    3472       lcall Beep_Judge
+17A1           3473   
+17A1 121651    3474       lcall dc_control
+17A4           3475   
+17A4           3476       ; After initialization the program stays in this 'forever' loop
+17A4 021762    3477       ljmp loop
+17A7           3478   ;-------------------------------------------------------------------------------;
+17A7           3479   END
