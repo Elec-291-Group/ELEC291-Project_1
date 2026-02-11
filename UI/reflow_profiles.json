@@ -1,0 +1,23 @@
+{
+  "selected": "Lead-Free SAC305",
+  "profiles": {
+    "Lead-Free SAC305": {
+      "soak_temp": 150.0,
+      "soak_time": 90,
+      "reflow_temp": 245.0,
+      "reflow_time": 60
+    },
+    "Leaded Sn63Pb37": {
+      "soak_temp": 150,
+      "soak_time": 60,
+      "reflow_temp": 183,
+      "reflow_time": 45
+    },
+    "Test": {
+      "soak_temp": 50,
+      "soak_time": 10,
+      "reflow_temp": 70,
+      "reflow_time": 10
+    }
+  }
+}
