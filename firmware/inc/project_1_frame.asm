@@ -31,7 +31,7 @@ $include(..\inc\MODMAX10)
 ;ADC_H DATA 0xa3
 $include(..\inc\math32.asm) ; 
 $LIST
-;-------------------------------------------------------------------------------;
+; ----------------------------------------------------------------------------------------------;
 ; Data Segment 0x30 -- 0x7F  (overall 79d bytes available)
 dseg at 0x30
 ; time buffer 
@@ -167,8 +167,7 @@ fullscreen_update_signal: dbit 1
 one_second_flag_test: dbit 1
 one_millisecond_flag_servo: dbit 1 ; set the one millsiecond flag for servo pwm signal generation
 
-servo_angle_zero: dbit 1 ; flag for indicating whether the servo angle should be 
-;at 0 or not: 1 -> 0; 0 -> 180
+servo_angle_zero: dbit 1 ; flag for indicating whether the servo angle should be at 0 or not: 1 -> 0; 0 -> 180
 soak_temp_greater: dbit 1 ; target soak_temp greater than current_temp
 
 remote_config_mode: dbit 1
@@ -270,8 +269,6 @@ String_state4:    db 'Ramp to Reflow ', 0
 String_state5:    db 'Reflow Phase   ', 0
 String_state6:    db 'Cooling        ', 0
 String_state7:    db 'Process Done   ', 0
-String_boot_Line1: db'Bing Bing Bing ', 0
-String_boot_Line2: db'Welcome to Use ', 0
 
 String_Blank:    db '                ', 0
 
@@ -334,11 +331,11 @@ SendString:
 SendString_L1:
     ret
 
-;-------------------------------------------------------------------------------;
+;------------------------------------------------------------
 ; getchar_nb (non-blocking)
 ; OUT: C=1 if got byte, A=byte
 ;      C=0 if none
-;-------------------------------------------------------------------------------;
+;------------------------------------------------------------
 getchar_nb:
     jnb RI, rx_none
     mov A, SBUF
@@ -348,11 +345,11 @@ getchar_nb:
 rx_none:
     clr C
     ret
-;-------------------------------------------------------------------------------;
+;------------------------------------------------------------
 ; Serial_RX_Pump
 ; Builds a null-terminated line in rx_buf.
 ; Sets rx_ready=1 when a full line received.
-;-------------------------------------------------------------------------------;
+;------------------------------------------------------------
 Serial_RX_Pump:
     mov A, rx_ready
     jnz rxp_done          ; don't overwrite unprocessed line
@@ -434,11 +431,11 @@ Copy4DigitsToBuf:
     mov @R1, #0
     ret
 
-;-------------------------------------------------------------------------------;
+;------------------------------------------------------------
 ; Serial_Process_Line
 ; Handles: UI:REMOTE, RUN:0/1, S:TTT, K:MMSS, R:TTT, L:MMSS, 
 ;          CFG:APPLY, CFG {json}, SAVE:1
-;-------------------------------------------------------------------------------;
+;------------------------------------------------------------
 Serial_Process_Line:
     mov A, rx_ready
     jnz SPL_HAVE
@@ -483,9 +480,9 @@ do_chk_L:
 do_chk_CFG_commands:
     ljmp chk_CFG_commands
 
-;-------------------------------------------------------------------------------;
+;------------------------------------------------------------
 ; UI:REMOTE - Switch to remote control mode
-;-------------------------------------------------------------------------------;
+;------------------------------------------------------------
 chk_UI_REMOTE:
     mov R0, #rx_buf
     mov A, @R0
@@ -505,9 +502,9 @@ chk_UI_REMOTE:
 spl_done_bridge1:
     ljmp spl_done
 
-;-------------------------------------------------------------------------------;
+;------------------------------------------------------------
 ; R commands: R:TTT (reflow temp) or RUN:0/1
-;-------------------------------------------------------------------------------;
+;------------------------------------------------------------
 chk_R_commands:
     mov R0, #rx_buf
     inc R0                     ; Point to second char
@@ -556,9 +553,9 @@ chk_RUN_zero:
 spl_done_bridge3:
     ljmp spl_done
 
-;-------------------------------------------------------------------------------;
+;------------------------------------------------------------
 ; S commands: S:TTT (soak temp) or SAVE:1
-;-------------------------------------------------------------------------------;
+;------------------------------------------------------------
 chk_S_commands:
     mov R0, #rx_buf
     inc R0                     ; Point to second char
@@ -633,9 +630,9 @@ chk_L:
 spl_done_bridge7:
     ljmp spl_done
 
-;-------------------------------------------------------------------------------;
+;------------------------------------------------------------
 ; CFG commands: CFG:APPLY or CFG {json}
-;-------------------------------------------------------------------------------;
+;------------------------------------------------------------
 chk_CFG_commands:
     mov R0, #rx_buf
     mov A, @R0
@@ -855,10 +852,10 @@ LCD_Print_2Digits:
 LCD_Display_Update_func:
     push acc
     
-;-------------------------------------------------------------------------------;
+    ; ==========================================
     ; PART 1: STATIC TEXT (Title)
     ; Runs ONLY when the state changes
-;-------------------------------------------------------------------------------;
+    ; ==========================================
     
     ; [FIX] "Trampoline" logic for long distance jump
     ; If signal is SET (1), we stay here and update.
@@ -935,16 +932,8 @@ LCD_Done_Bridge:
 Check_Live_Update:
     jnb one_second_flag, LCD_Done_Bridge
     clr one_second_flag
-
-    ; Update 7 seg Temp Update for all time
-    mov x, current_temp
-    mov x+1, current_temp+1
-    mov x+2, current_temp+2
-    mov x+3, current_temp+3
-    lcall hex2bcd
-    lcall Update_HEX_Temp 
     
-    ; Only update temp for States 2, 3, 4, 5, 6 on LCD
+    ; Only update temp for States 2, 3, 4, 5, 6
     mov a, Control_FSM_state
     cjne a, #2, Check_St3
     sjmp LCD_Update_Temp_Value
@@ -967,7 +956,8 @@ LCD_Update_Temp_Value:
     mov x+1, current_temp+1
     mov x+2, current_temp+2
     mov x+3, current_temp+3
-
+    lcall hex2bcd
+    lcall Update_HEX_Temp 
     mov a, bcd+1
     anl a, #0x0F
     add a, #0x30
@@ -998,9 +988,10 @@ LCD_Update_Temp_Value:
 LCD_Done:
     pop acc
     ret
-;-------------------------------------------------------------------------------;
-; screen update 
-;-------------------------------------------------------------------------------;
+
+; ----------------------------------------------------------------
+; MODULE: SCREEN UPDATE (Visual Logic)
+; ----------------------------------------------------------------
 Update_Screen_Full:
 	mov a, Control_FSM_state
 	cjne a, #1, Update_Screen_Full_ret
@@ -1013,6 +1004,7 @@ Update_Screen_Full_do:
 
     lcall Clear_Screen_Func
     Set_Cursor(1, 1)
+    ; --- Draw Line 1 (Titles) ---
     mov A, Current_State
     cjne A, #0, Update_State_1
     Send_Constant_String(#Txt_Home)
@@ -1153,6 +1145,7 @@ Update_HEX_Temp:
     mov HEX0, a
     ret
     
+;---------------------------------------------------------
 PB0_DEB:
 ;non-blocking state machine for PB0 debounce
     mov a, PB0_DEB_state
@@ -1307,8 +1300,18 @@ Time_Counter_Done:
 
 
 ;-------------------------------------------------------------------------------
-; used to compare time (starting from the end of the previous state) and check 
-; to see if it has reached set reflow and soak times 
+; Time_Compare_MMSS
+;
+; PURPOSE:
+;   Compare elapsed time (current_time_minute:current_time_sec)
+;   against soak and reflow setpoints (soak_time_*, reflow_time_*).
+;
+; BEHAVIOR:
+;   - If current_time >= soak_end_time   then soak_time_reached = 1
+;   - If current_time >= reflow_end_time then reflow_time_reached = 1
+;
+; NOTES:
+;   Compare minutes first, then seconds.
 ;-------------------------------------------------------------------------------
 Time_Compare_MMSS:
     push acc
@@ -1317,9 +1320,9 @@ Time_Compare_MMSS:
     mov a, Control_FSM_state
     cjne a, #3, TC_Not_Soak
 
-;-------------------------------------------------------------------------------;
-; STATE 3: soak time comp
-;-------------------------------------------------------------------------------;
+; ============================================================
+; STATE 3: SOAK TIME COMPARISON
+; ============================================================
     jbc state_change_signal_TC, TC_Soak_Start_Record
     sjmp TC_Soak_Comparing
 
@@ -1412,13 +1415,14 @@ TC_Done:
     pop  psw
     pop  acc
     ret
+
 ;-------------------------------------------------------------------------------;
 ; Temp_Compare
 ; Checks if we have reached the user's target temperatures.
 ; Only compares relevant temperature based on current Control_FSM_state:
 ;   State 2: Sets 'soak_temp_reached' if current_temp >= soak_temp
 ;   State 4: Sets 'reflow_temp_reached' if current_temp >= reflow_temp
-;   State 6: Sets 'cooling_temp_reached' if current_temp < 100Â°C
+;   State 6: Sets 'cooling_temp_reached' if current_temp < 100°C
 ;-------------------------------------------------------------------------------;
 Temp_Compare:
     push acc
@@ -1487,13 +1491,14 @@ Check_Cooling_Threshold:
     mov R1, #x
     lcall Copy4_Bytes_R0_to_R1
     
-    Load_y(100)                        ; Cooling target = 100Â°C
+    Load_y(100)                        ; Cooling target = 100°C
     lcall x_lt_y
     jnb mf, Temp_Compare_Done         ; If temp >= 100, not cooled yet
     
-    ; If Current < 100Â°C
+    ; If Current < 100°C
     setb cooling_temp_reached
 
+; ---------------------------------------------------------
 Temp_Compare_Done:
     pop AR2
     pop AR1
@@ -1595,8 +1600,24 @@ set_pwm_high:
 end_pwm_generator:
     ret
 
+;-------------------------------------------------------------------------------
+
 ;-------------------------------------------------------------------------------;
 ; Abort condition safety check Temperature time
+;
+; PURPOSE:
+;   Automatic cycle termination on error:
+;   Abort if oven fails to reach at least 50C in first 60s (1 minute).
+;
+; TRIP CONDITION:
+;   if (current_time_minute >= 1) AND (current_temp < 50C)
+;       -> set tc_missing_abort
+;       -> set stop_signal
+;
+; ASSUMPTIONS:
+;   - current_time_sec (byte): seconds 0-59
+;   - current_time_minute (byte): minutes counter
+;   - current_temp is in DEGREES C (integer, 32-bit, little-endian)
 ;-------------------------------------------------------------------------------;
 Safety_Check_TC:
     push acc
@@ -1604,76 +1625,85 @@ Safety_Check_TC:
     push AR0
     push AR1
 
-;-------------------------------------------------------------------------------;
-; ignore unless in state 2
-;-------------------------------------------------------------------------------;
+    ; ---------------------------------------------------------
+    ; GATEKEEPER: IGNORE UNLESS IN STATE 2 (RAMP TO SOAK)
+    ; ---------------------------------------------------------
     mov a, Control_FSM_state
     cjne a, #2, Safety_TC_Exit_Bridge ; If State != 2, skip everything
     sjmp Safety_Logic_Proceed         ; If State == 2, do the check
 
 Safety_TC_Exit_Bridge:
-    ljmp Safety_TC_Done               ; jump to the end
+    ljmp Safety_TC_Done               ; Jump to the end
 
 Safety_Logic_Proceed:
-    ; if already aborted or startup window closed, do nothing
+    ; If already aborted or startup window closed, do nothing
     jb   tc_missing_abort, Safety_TC_Done
     jnb  tc_startup_window, Safety_TC_Done
 
-    ; check: current_time_minute >= 1 ? (has 1 minute passed?)
+    ; Check: current_time_minute >= 1 ? (has 1 minute passed?)
     mov  a, current_time_minute
     jz   Safety_TC_Done               ; minute == 0, still waiting
 
-    ; we reached 1 minute: close the startup window so it won't re-check later
+    ; We reached 1 minute: close the startup window so it won't re-check later
     clr  tc_startup_window
 
-    ; now check: current_temp < 50 ?
+    ; Now check: current_temp < 50 ?
     mov  R0, #current_temp
     mov  R1, #x
     lcall Copy4_Bytes_R0_to_R1
 
     Load_Y(50)
     lcall x_lt_y
-    jnb  mf, Safety_TC_Done           ; temp >= 50 -> pass
+    jnb  mf, Safety_TC_Done           ; temp >= 50 ? pass
 
-    ; fail: at 1 minute, still below 50C -> abort
+    ; FAIL: at 1 minute, still below 50C ? abort
     clr  PWM_OUT
     setb tc_missing_abort
     setb stop_signal
-    
-    ;Force FSM to State 0 (Welcome)
-    mov Control_FSM_state, #0
-    
-    ;Force UI to State 0 (Home Screen)
-    mov Current_State, #0
-
-    ; Beep alarm
     lcall Beep_Ten
     
-    ;Trigger Screen Refresh
-    setb state_change_signal    
+    ; Force FSM to State 0 (Welcome)
+    mov Control_FSM_state, #0
+    
+    ; Force UI to State 0 (Home Screen)
+    mov Current_State, #0
+    
+    ; Trigger Screen Refresh
+    setb state_change_signal          ; Tell loop to redraw "Welcome"
 
 Safety_TC_Done:
-    clr tc_missing_abort
     pop  AR1
     pop  AR0
     pop  psw
     pop  acc
     ret
 
-;-------------------------------------------------------------------------------;
-; beep judge: 
-;-------------------------------------------------------------------------------;
-; -Beep once when state changes
-; - Beep five times when entering state 6 (cooling/finished)
-; - Beep ten times if tc_missing_abort = 1 (error)
+; ============================================================
+; BUZZER STARTUP FUNCTIONS
+; ============================================================
+;============================================================
+; Beep_Judge
+; Purpose: Trigger appropriate beep pattern based on events
+;   - Beep once when state changes
+;   - Beep five times when entering state 6 (cooling/finished)
+;   - Beep ten times if tc_missing_abort = 1 (error)
 ;
 ; Call this in main loop after Control_FSM
-;-------------------------------------------------------------------------------;
+;============================================================
 Beep_Judge:
     push acc
     push psw
 
+    ; --- Priority 1: Error condition (highest priority) ---
+    jnb tc_missing_abort, Beep_Judge_Check_State6
+    ; Error detected - beep 10 times (only once per error)
+    jb beep_error_done, Beep_Judge_Done   ; Already beeped for this error?
+    setb beep_error_done                   ; Mark as handled
+    lcall Beep_Ten
+    sjmp Beep_Judge_Done
+
 Beep_Judge_Check_State6:
+    ; --- Priority 2: Entering State 6 (finished) ---
     jnb state_change_beep_signal, Beep_Judge_Done  ; No state change? Exit
     
     mov a, Control_FSM_state
@@ -1684,6 +1714,7 @@ Beep_Judge_Check_State6:
     sjmp Beep_Judge_Done
 
 Beep_Judge_Normal_Change:
+    ; --- Priority 3: Normal state change - beep once ---
     clr state_change_beep_signal               ; Consume the signal
     lcall Beep_Once
 
@@ -1702,15 +1733,15 @@ Beep_Five:
 
 Beep_Ten:
     mov beep_count, #10
-    sjmp Beep_Start     
+    sjmp Beep_Start      ; [FIX] Added explicit jump for safety
 
 Beep_Start:
-    clr TR0              
-    mov beep_state, #1   
-    mov beep_tmr, #0     
-    mov beep_tmr+1, #0  
-    setb ET0            
-    setb TR0          
+    clr TR0              ; [FIX] Stop timer briefly to reset cleanly
+    mov beep_state, #1   ; Set State to ON
+    mov beep_tmr, #0     ; Reset Timer High Byte
+    mov beep_tmr+1, #0   ; Reset Timer Low Byte
+    setb ET0             ; [FIX] Ensure Interrupt is enabled
+    setb TR0             ; START the 2kHz tone
     ret
 ;-------------------------------------------------------------------------------
 ; Buzzer beep Task 
@@ -1719,7 +1750,7 @@ Beep_Start:
 ; Beep once when state changes
 ; Beep five times if finished
 ; Beep ten times if meets error
-;-------------------------------------------------------------------------------;
+;============================================================
 Beep_Task:
     jnb one_ms_beep_flag, Beep_Done
     clr one_ms_beep_flag
@@ -1734,16 +1765,19 @@ Beep_Task:
     inc beep_tmr+1
 
 Beep_Check:
+    ; FUZZY TIMER CHECK
     ; Check if High Byte is non-zero (Time >= 256ms)
     mov a, beep_tmr+1
     jz Beep_Done        ; If 0, keep beeping
 
+    ; --- Time Limit Reached ---
     mov beep_tmr, #0    ; Reset timer
     mov beep_tmr+1, #0
 
     mov a, beep_state
     cjne a, #1, Beep_Off_State
 
+    ; State was 1 (ON) -> Turn OFF
     clr TR0             ; Hardware Silence
     mov beep_state, #2  ; Set State to OFF (Pause)
     ret
@@ -1765,17 +1799,10 @@ Beep_Stop:
 
 Beep_Done:
     ret
-    
 ;-------------------------------------------------------------------------------;
 ; Main Control FSM for the entire process
 ;-------------------------------------------------------------------------------;
 Control_FSM:
-    ; Check abort first
-    jnb stop_signal, Control_FSM_normal
-    clr stop_signal
-    ljmp Control_FSM_state0_a    ; Clean transition to state 0
-    
-Control_FSM_normal:
     mov a, Control_FSM_state
     sjmp Control_FSM_state0
 
@@ -1786,6 +1813,7 @@ Control_FSM_state0_a:
 	ret
 Control_FSM_state0:
     cjne a, #0, Control_FSM_state1
+    clr beep_error_done
     jnb PB0_flag, Control_FSM_state0_ret  ; Check flag
     clr PB0_flag                 
     sjmp Control_FSM_state1_a
@@ -1814,11 +1842,7 @@ Control_FSM_state2_a:
 	setb state_change_signal_TC
 	setb state_change_signal_Count
     setb state_change_beep_signal
-    setb tc_startup_window 
-    clr tc_missing_abort
     clr soak_temp_reached
-    mov current_time_sec, #0
-    mov current_time_minute, #0
 	ret
 Control_FSM_state2:
     cjne a, #2, Control_FSM_state3
@@ -1930,9 +1954,15 @@ Control_FSM_state7_pressed:
 Control_FSM_done:
     ret
 
-;-------------------------------------------------------------------------------;
-; ui
-;-------------------------------------------------------------------------------;
+; ================================================================
+; UI & HELPER SUBROUTINES
+; ================================================================
+
+; ----------------------------------------------------------------
+; MODULE: BRIDGE (Text to Integer Conversion)
+; ----------------------------------------------------------------
+
+;--------------------------
 ;keep updating varaibles
 Update_FSM_Variables:
 	push ACC
@@ -1974,17 +2004,21 @@ Update_FSM_Variables_done:
 	pop AR6
 	pop ACC
     ret
+;--------------------------
 
+; --- Helper: Parse "123" to Integer ---
 Parse_Temp_String:
-    mov R7, #0    
+    mov R7, #0              ; Clear Result
 Parse_Temp_Loop:
     mov A, @R0
-    jz Parse_Temp_Done    
+    jz Parse_Temp_Done      ; If Null, we are done
     
+    ; Convert ASCII to Digit
     clr C
     subb A, #0x30
-    mov R5, A        
+    mov R5, A               ; R5 = New Digit
     
+    ; Result = (Result * 10) + New Digit
     mov A, R7
     mov B, #10
     mul AB
@@ -1996,6 +2030,7 @@ Parse_Temp_Loop:
 Parse_Temp_Done:
     ret
 
+; --- Parse "MMSS" to ceconds ---
 Parse_Time_String:
     ; Minutes tens
     mov A, @R0
@@ -2037,19 +2072,19 @@ Parse_Time_String:
     mov R6, a     ; seconds
     ret
 
-;-------------------------------------------------------------------------------;
-; button handler (Mode Selection)
-;-------------------------------------------------------------------------------;
+; ----------------------------------------------------------------
+; MODULE: BUTTON HANDLER (Mode Selection)
+; ----------------------------------------------------------------
 ; Blocking wrapper for LCD clear (keeps old behavior just for this)
 Wait_25ms_BLOCKING:
     lcall Wait_25ms
     jnc Wait_25ms_BLOCKING ; Keep jumping back until Done (C=1)
     ret
 
-;-------------------------------------------------------------------------------;
-; MODULE: button handler (non-blocking)
-;-------------------------------------------------------------------------------;
-; vars
+; ----------------------------------------------------------------
+; MODULE: BUTTON HANDLER (Non-Blocking Debounce)
+; ----------------------------------------------------------------
+; Variables needed:
 ;   BTN_DEB_state   - state machine state (0-3)
 ;   BTN_DEB_timer   - debounce timer (incremented by ISR every 1ms)
 ;   BTN_DEB_id      - which button was pressed (1-4)
@@ -2063,6 +2098,7 @@ Check_Buttons:
     mov a, Control_FSM_state
     cjne a, #1, Check_Buttons_Done_bridge
     
+    ; --- FORCE INPUT MODE ---
     orl P0, #055H   ; Sets P0.0, P0.2, P0.4, P0.6 to '1' (Input Mode)
     
     mov a, BTN_DEB_state
@@ -2071,9 +2107,9 @@ Check_Buttons:
 Check_Buttons_Done_bridge:
     ljmp Check_Buttons_Done
 
-;-------------------------------------------------------------------------------;
+; ============================================================
 ; State 0: Wait for any button press
-;-------------------------------------------------------------------------------;
+; ============================================================
 BTN_DEB_state0:
     cjne a, #0, BTN_DEB_state1
     
@@ -2102,9 +2138,9 @@ BTN_Start_Debounce:
     inc BTN_DEB_state
     sjmp Check_Buttons_Done
 
-;-------------------------------------------------------------------------------;
+; ============================================================
 ; State 1: Debounce delay (wait 50ms)
-;-------------------------------------------------------------------------------;
+; ============================================================
 BTN_DEB_state1:
     cjne a, #1, BTN_DEB_state2
     mov a, BTN_DEB_timer
@@ -2112,9 +2148,9 @@ BTN_DEB_state1:
     inc BTN_DEB_state
     sjmp Check_Buttons_Done
 
-;-------------------------------------------------------------------------------;
+; ============================================================
 ; State 2: Verify button still pressed
-;-------------------------------------------------------------------------------;
+; ============================================================
 BTN_DEB_state2:
     cjne a, #2, BTN_DEB_state3
     
@@ -2143,9 +2179,9 @@ BTN_Verify_OK:
     inc BTN_DEB_state               ; Confirmed, wait for release
     sjmp Check_Buttons_Done
 
-;-------------------------------------------------------------------------------;
+; ============================================================
 ; State 3: Wait for button release, then trigger action
-;-------------------------------------------------------------------------------;
+; ============================================================
 BTN_DEB_state3:
     cjne a, #3, Check_Buttons_Done
     
@@ -2166,9 +2202,9 @@ BTN_Release_Check4:
     jnb BTN_REFL_TIME, Check_Buttons_Done
     ; Fall through to action
 
-;-------------------------------------------------------------------------------;
+; ============================================================
 ; Button Released - Execute Action
-;-------------------------------------------------------------------------------;
+; ============================================================
 BTN_Do_Action:
     mov a, BTN_DEB_id
     
@@ -2195,9 +2231,9 @@ Check_Buttons_Done:
     pop PSW
     pop ACC
     ret
-;-------------------------------------------------------------------------------;
-; handler for keypad
-;-------------------------------------------------------------------------------;
+; ----------------------------------------------------------------
+; MODULE: KEYPAD HANDLER (Input Logic)
+; ----------------------------------------------------------------
 Check_Keypad:
     mov a, Control_FSM_state
     cjne a, #1, Keypad_Exit
@@ -2467,9 +2503,9 @@ Reset_Chk_4:
     lcall Init_Time_Template
     ret 
     
-;-------------------------------------------------------------------------------;
-; thermocouple adc driver 
-;-------------------------------------------------------------------------------;
+; ================================================================
+; MODULE: THERMOCOUPLE ADC DRIVER (WITH NOISE SUPPRESSION & JUMP FIX)
+; ================================================================
 Read_Thermocouple:
     lcall Wait_25ms
     jc Proceed_Reading
@@ -2582,10 +2618,10 @@ Set_20_Percent_Power:
     mov power_output+2, #0
     mov power_output+3, #0
     ret
-;-------------------------------------------------------------------------------;
+;--------------------------------------------------------------
 ; set servo angle according to the state
 ; call servo control function every 1ms
-;-------------------------------------------------------------------------------;
+;--------------------------------------------------------------
 call_servo_control:
 	; check current state and change servo angle
 	mov a, Control_FSM_state
@@ -2732,7 +2768,7 @@ power_leds_low:
 
 power_leds_mid:
     setb LED_LEFT
-    clr LED_MID
+    setb LED_MID
     clr  LED_RIGHT
     ret
 
@@ -2753,7 +2789,6 @@ state0_power_control:
 	mov power_output+1, #low(NO_POWER)
 	mov power_output+2, #0
 	mov power_output+3, #0
-    lcall power_leds_low
 	ljmp power_control_done
 
 state1_power_control:
@@ -2764,7 +2799,6 @@ state1_power_control:
 	mov power_output+1, #low(NO_POWER)
 	mov power_output+2, #0
 	mov power_output+3, #0
-    lcall power_leds_low
 	ljmp power_control_done
 	
 state2_power_control:
@@ -2795,7 +2829,6 @@ state2_power_control:
     mov power_output+1, #high(BASE_POWER)
     mov power_output+2, #0
     mov power_output+3, #0
-    lcall power_leds_mid
     ljmp power_control_done
 
 state_2_full_power:
@@ -2803,14 +2836,12 @@ state_2_full_power:
 	mov power_output+1, #high(MAX_POWER)
 	mov power_output+2, #0
 	mov power_output+3, #0
-    lcall power_leds_high
 	ljmp power_control_done
 
 state3_power_control:
 	; soak period, hold at 150C
 	; 20% base power + proportional calculated power
 	cjne a, #3, jump_state4_power_control
-    lcall power_leds_mid
 	sjmp state3_power_control_calculation
 
 jump_state4_power_control:
@@ -2953,7 +2984,6 @@ state4_power_control:
 	mov power_output+1, #high(MAX_POWER)
 	mov power_output+2, #0
 	mov power_output+3, #0
-    lcall power_leds_high
 	ljmp power_control_done
 
 state5_power_control:
@@ -2963,7 +2993,6 @@ state5_power_control:
 	mov power_output+1, #high(BASE_POWER)
 	mov power_output+2, #0
 	mov power_output+3, #0
-    lcall power_leds_mid
 	ljmp power_control_done
 
 state6_power_control:
@@ -2973,7 +3002,6 @@ state6_power_control:
 	mov power_output+1, #high(NO_POWER)
 	mov power_output+2, #0
 	mov power_output+3, #0
-    lcall power_leds_low
 	ljmp power_control_done
 
 state_7_power_control:
@@ -2982,7 +3010,7 @@ state_7_power_control:
 	mov power_output+1, #high(NO_POWER)
 	mov power_output+2, #0
 	mov power_output+3, #0
-    lcall power_leds_low
+
 power_control_done:
 	ret
 
@@ -3051,7 +3079,7 @@ OUTER_LOOP:
 
 INNER_LOOP:
     CPL SOUND_OUT           ; toggle buzzer pin
-    LCALL Delay_C      ; ~960 ï¿½s delay
+    LCALL Delay_C      ; ~960 ?s delay
     DJNZ R6, INNER_LOOP
 
     DJNZ R7, OUTER_LOOP
@@ -3060,7 +3088,7 @@ INNER_LOOP:
     RET
     
 Delay_C:
-    MOV R5, #24        ; 24 ï¿½ 40 ï¿½s = 960 ï¿½s
+    MOV R5, #24        ; 24 ? 40 ?s = 960 ?s
 DELAY_LOOP:
     LCALL Wait40uSec
     DJNZ R5, DELAY_LOOP
@@ -3075,11 +3103,11 @@ playG:
     MOV R7, #31        ; outer loop
 
 OUTER_G:
-    MOV R6, #25        ; inner loop 31 ï¿½ 25 = 775 toggles
+    MOV R6, #25        ; inner loop 31 ? 25 = 775 toggles
 
 INNER_G:
     CPL SOUND_OUT           ; toggle buzzer pin
-    LCALL Delay_G      ; ~640 ï¿½s delay
+    LCALL Delay_G      ; ~640 ?s delay
     DJNZ R6, INNER_G
 
     DJNZ R7, OUTER_G
@@ -3088,7 +3116,7 @@ INNER_G:
     RET
     
 Delay_G:
-    MOV R5, #16        ; 16 ï¿½ 40 ï¿½s = 640 ï¿½s
+    MOV R5, #16        ; 16 ? 40 ?s = 640 ?s
 DELAY_G_LOOP:
     LCALL Wait40uSec
     DJNZ R5, DELAY_G_LOOP
@@ -3103,11 +3131,11 @@ playA:
     MOV R7, #34        ; outer loop counter
 
 OUTER_A:
-    MOV R6, #26        ; inner loop ? 34 ï¿½ 26 = 884 toggles
+    MOV R6, #26        ; inner loop ? 34 ? 26 = 884 toggles
 
 INNER_A:
     CPL SOUND_OUT           ; toggle buzzer pin
-    LCALL Delay_A      ; ~560 ï¿½s delay
+    LCALL Delay_A      ; ~560 ?s delay
     DJNZ R6, INNER_A
 
     DJNZ R7, OUTER_A
@@ -3116,7 +3144,7 @@ INNER_A:
     RET
 
 Delay_A:
-    MOV R5, #14        ; 14 ï¿½ 40 ï¿½s = 560 ï¿½s
+    MOV R5, #14        ; 14 ? 40 ?s = 560 ?s
 DELAY_A_LOOP:
     LCALL Wait40uSec
     DJNZ R5, DELAY_A_LOOP
@@ -3130,11 +3158,11 @@ playF:
     MOV R7, #26        ; outer loop
 
 OUTER_F:
-    MOV R6, #27        ; inner loop ? 26 ï¿½ 27 = 702 toggles
+    MOV R6, #27        ; inner loop ? 26 ? 27 = 702 toggles
 
 INNER_F:
     CPL SOUND_OUT          ; toggle buzzer pin
-    LCALL Delay_F      ; ~720 ï¿½s delay
+    LCALL Delay_F      ; ~720 ?s delay
     DJNZ R6, INNER_F
 
     DJNZ R7, OUTER_F
@@ -3143,7 +3171,7 @@ INNER_F:
     RET
 
 Delay_F:
-    MOV R5, #18        ; 18 ï¿½ 40 ï¿½s = 720 ï¿½s
+    MOV R5, #18        ; 18 ? 40 ?s = 720 ?s
 DELAY_F_LOOP:
     LCALL Wait40uSec
     DJNZ R5, DELAY_F_LOOP
@@ -3158,11 +3186,11 @@ playE:
     MOV R7, #26        ; outer loop
 
 OUTER_E:
-    MOV R6, #25        ; inner loop ? 26 ï¿½ 25 = 650 toggles
+    MOV R6, #25        ; inner loop ? 26 ? 25 = 650 toggles
 
 INNER_E:
     CPL SOUND_OUT           ; toggle buzzer pin
-    LCALL Delay_E      ; ~760 ï¿½s delay
+    LCALL Delay_E      ; ~760 ?s delay
     DJNZ R6, INNER_E
 
     DJNZ R7, OUTER_E
@@ -3171,7 +3199,7 @@ INNER_E:
     RET
     
 Delay_E:
-    MOV R5, #19        ; 19 ï¿½ 40 ï¿½s = 760 ï¿½s
+    MOV R5, #19        ; 19 ? 40 ?s = 760 ?s
 DELAY_E_LOOP:
     LCALL Wait40uSec
     DJNZ R5, DELAY_E_LOOP
@@ -3186,11 +3214,11 @@ playD:
     MOV R7, #25        ; outer loop
 
 OUTER_D:
-    MOV R6, #24        ; inner loop ? 25 ï¿½ 24 = 600 toggles
+    MOV R6, #24        ; inner loop ? 25 ? 24 = 600 toggles
 
 INNER_D:
     CPL SOUND_OUT          ; toggle buzzer pin
-    LCALL Delay_D      ; ~840 ï¿½s delay
+    LCALL Delay_D      ; ~840 ?s delay
     DJNZ R6, INNER_D
 
     DJNZ R7, OUTER_D
@@ -3199,15 +3227,16 @@ INNER_D:
     RET
     
 Delay_D:
-    MOV R5, #21        ; 21 ï¿½ 40 ï¿½s = 840 ï¿½s
+    MOV R5, #21        ; 21 ? 40 ?s = 840 ?s
 DELAY_D_LOOP:
     LCALL Wait40uSec
     DJNZ R5, DELAY_D_LOOP
     RET
 
 delayHalfSec:
-	mov	R2, #50
+	mov	R2, #125
 	lcall WaitmilliSec
+	;lcall WaitmilliSec
 	ret
 
 ;---------------------------------;
@@ -3281,21 +3310,22 @@ dc_control:
 dc_control_done:
     ret
 
-Boot_Line_Display_Func:
-    Set_Cursor(1,1)
-    Send_Constant_String(#String_boot_Line1)
-    Set_Cursor(2,1)
-    Send_Constant_String(#String_boot_Line2)
-    ret
-
 ;-------------------------------------------------------------------------------;
 ;         Main program.          
 ;-------------------------------------------------------------------------------;
 main:
 
+    ; --------------------------------------------------------
+    ; 1. SAFETY SHUTDOWN
+    ; --------------------------------------------------------
     clr EA              ; FORCE Interrupts OFF immediately
     mov SP, #0xC0       ; Reset Stack Pointer to safe location
     
+    ; --------------------------------------------------------
+    ; THE "DIRTY DELAY" (Fixes Reset Garbage)
+    ; We burn ~100ms here using a raw loop. 
+    ; We cannot use timers yet because they aren't initialized.
+    ; --------------------------------------------------------
     mov R0, #250
 Reset_Delay_Outer:
     mov R1, #255
@@ -3303,6 +3333,7 @@ Reset_Delay_Inner:
     djnz R1, Reset_Delay_Inner
     djnz R0, Reset_Delay_Outer
     
+    ; --- PORT CONFIGURATION ---
     mov P0MOD, #0xAA
     ; P1: Mixed usage 
     ; P1.7(LCD_RS), P1.6(Row3), P1.5(Sound), P1.4(Row2)
@@ -3318,7 +3349,7 @@ Reset_Delay_Inner:
 
     ; P3: Col4(In)
     ; P3.0 (Col4) is In (0).
-    mov P3MOD, #01011100B
+    mov P3MOD, #0x00
     mov P4MOD, #00000001B
 
     ; Turn off all the LEDs
@@ -3399,17 +3430,10 @@ Reset_Delay_Inner:
     clr one_millisecond_flag_servo
     clr remote_config_mode
     clr DC_OUT
-    clr PWM_OUT
-    clr LED_LEFT
-    clr LED_MID
-    clr LED_RIGHT
-
     ; Set bit
 	setb state_change_signal
     setb tc_startup_window
 
-    lcall Clear_Screen_Func
-    lcall Boot_Line_Display_Func
     lcall Timer0_Init
     lcall Timer2_Init
     lcall ELCD_4BIT
