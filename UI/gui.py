@@ -20,7 +20,7 @@ import matplotlib.animation as animation
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 
-# ===================== CONFIGURATION =====================
+# -------------------------------------------------------------------------------------------------
 DEFAULT_PORT = "COM7"
 BAUD = 57600
 LOG_FILENAME = "temperature_log.csv"
@@ -39,8 +39,7 @@ DEFAULT_PROFILES = {
     "Test":             {"soak_temp": 50,  "soak_time": 10, "reflow_temp": 70,  "reflow_time": 10},
 }
 
-
-# ===================== FORMAT HELPERS (MATCH DE10 BUFFERS) =====================
+# -------------------------------------------------------------------------------------------------
 def clamp_int(v, lo, hi):
     try:
         v = int(v)
@@ -69,8 +68,7 @@ def sec_to_mmss_str(total_sec: int) -> str:
     s = total_sec % 60
     return f"{m:02d}{s:02d}"
 
-
-# ===================== SERIAL MANAGER =====================
+# -------------------------------------------------------------------------------------------------
 class SerialManager:
     """
     One writer thread + one reader thread.
@@ -87,7 +85,7 @@ class SerialManager:
 
         self.connected = False
 
-        # pacing: CV-8052 UART parsers often need a little spacing
+        #pacing: CV-8052 UART parsers often need a little spacing
         self.min_tx_gap_s = 0.08
 
     def list_ports(self):
@@ -114,7 +112,7 @@ class SerialManager:
         self.rx_thread.start()
         self.tx_thread.start()
 
-        # Flush any boot spam so our first command doesn't get mixed in
+        #Flush any boot spam so our first command doesn't get mixed in
         try:
             self.ser.reset_input_buffer()
             self.ser.reset_output_buffer()
@@ -201,9 +199,7 @@ class SerialManager:
                 self.rx_queue.put(("SERIAL_ERROR", str(e)))
                 self.disconnect()
                 return
-
-
-# ===================== GUI APPLICATION =====================
+# -------------------------------------------------------------------------------------------------
 class ReflowGUI:
     def __init__(self, root):
         self.root = root
@@ -246,7 +242,6 @@ class ReflowGUI:
         self.var_smtp_user = tk.StringVar(value="raifzaman2021@gmail.com")
         self.var_smtp_pass = tk.StringVar(value=os.environ.get("SMTP_PASS", "czxwvzirdibhrduc"))
 
-        # ---- Pure Python "PWM duty" estimate (fixed per phase) ----
         self.var_duty = tk.DoubleVar(value=0.0)
         self.phase_name = "IDLE"
 
@@ -271,7 +266,7 @@ class ReflowGUI:
         self.start_animation()
         self.root.after(50, self.poll_serial_rx)
 
-    # ---------- UI BUILD ----------
+# -------------------------------------------------------------------------------------------------
     def build_left_panel(self):
         # --- CONNECTION ---
         conn = ttk.LabelFrame(self.left_frame, text="Connection", padding=10)
@@ -307,17 +302,17 @@ class ReflowGUI:
         self.lbl_conn = ttk.Label(conn, text="Disconnected", foreground="gray")
         self.lbl_conn.pack(anchor="w", pady=(8, 0))
 
-        # --- TITLE ---
+        # ---title ---
         lbl_title = ttk.Label(self.left_frame, text="Reflow Profiles", font=("Arial", 14, "bold"))
         lbl_title.pack(pady=(5, 5), anchor="w", padx=10)
 
-        # --- PROFILE LIST ---
+        # --- profile ---
         self.listbox = tk.Listbox(self.left_frame, height=8, font=("Arial", 10), exportselection=False)
         self.listbox.pack(fill=tk.X, padx=10, pady=5)
         self.listbox.bind("<<ListboxSelect>>", self.on_profile_select)
         self.refresh_profile_list()
 
-        # --- PARAMETERS ---
+        # --- params  ---
         param_frame = ttk.LabelFrame(self.left_frame, text="Parameters", padding=10)
         param_frame.pack(fill=tk.X, padx=10, pady=10)
 
@@ -329,7 +324,7 @@ class ReflowGUI:
         for var in [self.var_soak_temp, self.var_soak_time, self.var_reflow_temp, self.var_reflow_time]:
             var.trace_add("write", self.update_preview_trace)
 
-        # --- ACTION BUTTONS ---
+        # --- buttons ---
         btn_frame = ttk.Frame(self.left_frame)
         btn_frame.pack(fill=tk.X, padx=10, pady=5)
 
@@ -343,7 +338,7 @@ class ReflowGUI:
             side=tk.LEFT, expand=True, fill=tk.X, padx=2
         )
 
-        # --- MCU PROFILE PUSH ---
+        # --- mcu profile push ---
         mcu_frame = ttk.LabelFrame(self.left_frame, text="DE10 / CV-8052", padding=10)
         mcu_frame.pack(fill=tk.X, padx=10, pady=(12, 10))
 
@@ -354,7 +349,7 @@ class ReflowGUI:
             fill=tk.X, pady=(0, 6)
         )
 
-        # --- OVEN CONTROL ---
+        # --- oven control ---
         ctrl_frame = ttk.LabelFrame(self.left_frame, text="Oven Control", padding=10)
         ctrl_frame.pack(fill=tk.X, padx=10, pady=(10, 10))
 
@@ -406,7 +401,7 @@ class ReflowGUI:
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=5)
         ttk.Entry(parent, textvariable=var, width=10).grid(row=row, column=1, sticky="e", pady=5)
 
-    # ---------- Profiles ----------
+    # -------------------------------------------------------------------------------------------------
     def load_profiles(self):
         try:
             with open(PROFILE_FILE, "r") as f:
@@ -523,7 +518,7 @@ class ReflowGUI:
             del self.profiles[self.current_profile_key]
             self.refresh_profile_list()
 
-    # ---------- Connection ----------
+    # -------------------------------------------------------------------------------------------------
     def refresh_ports(self):
         ports = self.sm.list_ports()
         self.cmb_ports["values"] = ports
@@ -584,7 +579,7 @@ class ReflowGUI:
         self.lbl_conn.config(text=f"Connected: {desired} @ {baud}", foreground="green")
         self.sm.send_line("UI:REMOTE")
 
-    # ---------- MCU Protocol Helpers ----------
+    # -------------------------------------------------------------------------------------------------
     def get_current_params(self):
         st = int(float(self.var_soak_temp.get()))
         stime = int(self.var_soak_time.get())
@@ -648,7 +643,7 @@ class ReflowGUI:
     def upload_profile_ram(self):
         self.upload_profile_common(save_to_nvm=False)
 
-    # ---------- Oven Control ----------
+    # -------------------------------------------------------------------------------------------------
     def start_process(self):
         if not self.sm.connected:
             messagebox.showwarning("Serial", "Not connected to DE10.")
@@ -692,9 +687,8 @@ class ReflowGUI:
         Not tied to FSM; purely derived from temp and targets.
         """
         st, _stime, rt, _rtime = self.get_current_params()
-        band = 5.0  # +/- band for "holding" phases
+        band = 5.0
 
-        # Define ranges for each phase
         ramp1_lo, ramp1_hi = 25.0, max(25.0, st - band)
         soak_lo, soak_hi = st - band, st + band
         ramp2_lo, ramp2_hi = st + band, max(st + band, rt - band)
@@ -714,14 +708,12 @@ class ReflowGUI:
             rng = (reflow_lo, reflow_hi)
         else:
             phase = "COOLING"
-            # cooling: show progress from reflow_hi down to 50C
             rng = (50.0, reflow_hi)
 
         lo, hi = rng
         if hi <= lo:
             pct = 0.0
         else:
-            # For cooling, invert progress (higher temp -> lower %)
             if phase == "COOLING":
                 pct = 100.0 * (hi - temp_c) / (hi - lo)
             else:
@@ -768,7 +760,7 @@ class ReflowGUI:
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    # ---------- RX Parsing ----------
+    # -------------------------------------------------------------------------------------------------
     def poll_serial_rx(self):
         try:
             while True:
@@ -786,8 +778,7 @@ class ReflowGUI:
                 self.last_line_time = time.time()
 
                 if line.lower().startswith("temp"):
-                    try:
-                        # Handles: "Temp: 123C", "Temp:123C", "TEMP: 123", etc.
+                    try: #idk debugging
                         s = line.replace("Temp", "").replace("TEMP", "")
                         s = s.replace(":", " ").replace("C", " ").strip()
                         val = float(s.split()[0])
@@ -833,7 +824,7 @@ class ReflowGUI:
             window = list(self.yraw)[-n:]
             self.yfilt.append(sum(window) / float(n))
 
-    # ---------- Animation ----------
+   # -------------------------------------------------------------------------------------------------
     def start_animation(self):
         def animate(_i):
             self.line_raw.set_data(self.xdata, self.yraw)
@@ -848,8 +839,7 @@ class ReflowGUI:
 
         self.anim = animation.FuncAnimation(self.fig, animate, interval=100, blit=False)
 
-
-# ===================== MAIN =====================
+# -------------------------------------------------------------------------------------------------
 if __name__ == "__main__":
     root = tk.Tk()
     app = ReflowGUI(root)
