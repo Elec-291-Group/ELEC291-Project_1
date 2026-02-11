@@ -5,6 +5,9 @@ import threading
 import json
 import queue
 from collections import deque
+import smtplib
+import ssl
+import os
 
 import serial
 import serial.tools.list_ports
@@ -216,6 +219,8 @@ class ReflowGUI:
 
         self.is_running = False
         self.start_time = 0.0
+        self.graph_started = False
+        self.email_sent = False
 
         # MCU state / debug
         self.last_temp = None
@@ -229,14 +234,21 @@ class ReflowGUI:
         # Tk variables
         self.var_port = tk.StringVar(value=DEFAULT_PORT)
         self.var_baud = tk.IntVar(value=BAUD)
-
-        # manual port entry var
         self.var_port_manual = tk.StringVar(value="")
 
         self.var_soak_temp = tk.DoubleVar()
         self.var_soak_time = tk.IntVar()
         self.var_reflow_temp = tk.DoubleVar()
         self.var_reflow_time = tk.IntVar()
+        self.var_email = tk.StringVar(value="")
+        self.var_smtp_host = tk.StringVar(value="smtp.gmail.com")
+        self.var_smtp_port = tk.IntVar(value=587)
+        self.var_smtp_user = tk.StringVar(value="raifzaman2021@gmail.com")
+        self.var_smtp_pass = tk.StringVar(value=os.environ.get("SMTP_PASS", "czxwvzirdibhrduc"))
+
+        # ---- Pure Python "PWM duty" estimate (fixed per phase) ----
+        self.var_duty = tk.DoubleVar(value=0.0)
+        self.phase_name = "IDLE"
 
         # Layout
         style = ttk.Style()
@@ -253,6 +265,7 @@ class ReflowGUI:
 
         self.build_right_panel()
         self.build_left_panel()
+        self.set_border("red")
 
         # Start animation + RX polling
         self.start_animation()
@@ -354,6 +367,16 @@ class ReflowGUI:
         self.btn_clear = ttk.Button(ctrl_frame, text="Clear Graph", command=self.clear_graph)
         self.btn_clear.pack(fill=tk.X, pady=5)
 
+        # --- EMAIL NOTIFY ---
+        email_frame = ttk.LabelFrame(self.left_frame, text="Email Notify (SMTP)", padding=10)
+        email_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+        ttk.Label(email_frame, text="Recipient:").grid(row=0, column=0, sticky="w", pady=2)
+        ttk.Entry(email_frame, textvariable=self.var_email, width=24).grid(row=0, column=1, sticky="e", pady=2)
+        ttk.Label(email_frame, text="SMTP user:").grid(row=1, column=0, sticky="w", pady=2)
+        ttk.Entry(email_frame, textvariable=self.var_smtp_user, width=24).grid(row=1, column=1, sticky="e", pady=2)
+        ttk.Label(email_frame, text="SMTP password:").grid(row=2, column=0, sticky="w", pady=2)
+        ttk.Entry(email_frame, textvariable=self.var_smtp_pass, width=24, show="*").grid(row=2, column=1, sticky="e", pady=2)
+
         # --- STATUS ---
         self.lbl_status = ttk.Label(self.left_frame, text="Status: IDLE", font=("Consolas", 12), foreground="gray")
         self.lbl_status.pack(side=tk.BOTTOM, pady=(0, 12))
@@ -368,14 +391,16 @@ class ReflowGUI:
         self.ax.set_ylabel("Temperature (°C)")
         self.ax.grid(True, linestyle="--", alpha=0.6)
 
-        self.line_target, = self.ax.plot([], [], "g--", label="Target")
         self.line_filt, = self.ax.plot([], [], "b-", linewidth=2, label="Displayed")
         self.line_raw, = self.ax.plot([], [], "r-", linewidth=0.7, alpha=0.5, label="Raw")
-        self.ax.legend(loc="upper left")
 
         self.canvas = FigureCanvasTkAgg(self.fig, master=self.right_frame)
         self.canvas.draw()
         self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+    def set_border(self, color: str):
+        # Use a window highlight border as a simple status indicator
+        self.root.configure(highlightthickness=8, highlightbackground=color, highlightcolor=color)
 
     def create_input(self, parent, label, var, row):
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=5)
@@ -449,7 +474,6 @@ class ReflowGUI:
 
             xs.append(time_end_reflow + 60); ys.append(50)
 
-            self.line_target.set_data(xs, ys)
             self.ax.relim()
             self.ax.autoscale_view()
             self.canvas.draw_idle()
@@ -569,14 +593,6 @@ class ReflowGUI:
         return st, stime, rt, rtime
 
     def upload_profile_common(self, save_to_nvm: bool):
-        """
-        We keep CFG JSON as an optional "future" path,
-        but the important part here is S/K/R/L are now buffer-formatted:
-          S:TTT   (3 digits)
-          K:MMSS  (4 digits)
-          R:TTT
-          L:MMSS
-        """
         if not self.sm.connected:
             messagebox.showwarning("Serial", "Not connected to DE10.")
             return
@@ -587,13 +603,11 @@ class ReflowGUI:
             messagebox.showerror("Params", "Invalid parameters. Check the fields.")
             return
 
-        # Pre-format exactly how the DE10 buffers want them
         s_temp = fmt_temp_3dig(st)
         r_temp = fmt_temp_3dig(rt)
         s_time = sec_to_mmss_str(stime)
         r_time = sec_to_mmss_str(rtime)
 
-        # Optional JSON (harmless if ignored by firmware)
         cfg = {
             "soak_temp": int(s_temp),
             "soak_time": int(stime),
@@ -605,21 +619,16 @@ class ReflowGUI:
         cfg_line = "CFG " + json.dumps(cfg, separators=(",", ":"))
 
         self.sm.send_lines([
-    "RUN:0",
+            "RUN:0",
 
-    # send buffer text first
-    f"S:{s_temp}",
-    f"K:{s_time}",
-    f"R:{r_temp}",
-    f"L:{r_time}",
+            f"S:{s_temp}",
+            f"K:{s_time}",
+            f"R:{r_temp}",
+            f"L:{r_time}",
 
-    # now commit/apply on the MCU
-    "CFG:APPLY",
-
-    # optional / harmless if ignored
-    cfg_line,
-])
-
+            "CFG:APPLY",
+            cfg_line,
+        ])
 
         if save_to_nvm:
             self.sm.send_line("SAVE:1")
@@ -630,8 +639,7 @@ class ReflowGUI:
             f"Soak Temp:  S:{s_temp}\n"
             f"Soak Time:  K:{s_time}  (MMSS)\n"
             f"Reflow Temp:R:{r_temp}\n"
-            f"Reflow Time:L:{r_time}  (MMSS)\n\n"
-            "Next step: firmware must read UART and copy into Buf_*."
+            f"Reflow Time:L:{r_time}  (MMSS)\n"
         )
 
     def upload_profile_save(self):
@@ -652,15 +660,21 @@ class ReflowGUI:
         self.sm.send_line("RUN:1")
 
         self.is_running = True
+        self.graph_started = True
+        self.email_sent = False
         self.start_time = time.time()
         self.clear_graph()
         self.lbl_status.config(text="Status: RUNNING", foreground="green")
+        self.set_border("green")
+
 
     def stop_process(self):
         if self.sm.connected:
             self.sm.send_line("RUN:0")
         self.is_running = False
+        self.email_sent = False
         self.lbl_status.config(text="Status: STOPPED", foreground="red")
+        self.set_border("red")
 
     def clear_graph(self):
         self.xdata.clear()
@@ -669,6 +683,90 @@ class ReflowGUI:
         self.line_filt.set_data([], [])
         self.line_raw.set_data([], [])
         self.canvas.draw_idle()
+        self.graph_started = False
+        self.email_sent = False
+
+    def _compute_phase_and_progress(self, temp_c: float):
+        """
+        Use current temp vs profile targets to infer phase and progress.
+        Not tied to FSM; purely derived from temp and targets.
+        """
+        st, _stime, rt, _rtime = self.get_current_params()
+        band = 5.0  # +/- band for "holding" phases
+
+        # Define ranges for each phase
+        ramp1_lo, ramp1_hi = 25.0, max(25.0, st - band)
+        soak_lo, soak_hi = st - band, st + band
+        ramp2_lo, ramp2_hi = st + band, max(st + band, rt - band)
+        reflow_lo, reflow_hi = rt - band, rt + band
+
+        if temp_c < ramp1_hi:
+            phase = "RAMP→SOAK"
+            rng = (ramp1_lo, ramp1_hi)
+        elif soak_lo <= temp_c <= soak_hi:
+            phase = "SOAK"
+            rng = (soak_lo, soak_hi)
+        elif temp_c < ramp2_hi:
+            phase = "RAMP→REFLOW"
+            rng = (ramp2_lo, ramp2_hi)
+        elif reflow_lo <= temp_c <= reflow_hi:
+            phase = "REFLOW"
+            rng = (reflow_lo, reflow_hi)
+        else:
+            phase = "COOLING"
+            # cooling: show progress from reflow_hi down to 50C
+            rng = (50.0, reflow_hi)
+
+        lo, hi = rng
+        if hi <= lo:
+            pct = 0.0
+        else:
+            # For cooling, invert progress (higher temp -> lower %)
+            if phase == "COOLING":
+                pct = 100.0 * (hi - temp_c) / (hi - lo)
+            else:
+                pct = 100.0 * (temp_c - lo) / (hi - lo)
+        pct = max(0.0, min(100.0, pct))
+        range_label = f"{lo:.0f}–{hi:.0f}C"
+        return phase, pct, range_label
+
+    def _send_email_notification(self):
+        to_addr = self.var_email.get().strip()
+        host = self.var_smtp_host.get().strip()
+        user = self.var_smtp_user.get().strip()
+        pwd = self.var_smtp_pass.get().strip()
+        try:
+            port = int(self.var_smtp_port.get())
+        except Exception:
+            port = 587
+
+        if not to_addr or not host or not user or not pwd:
+            return
+
+        subject = "Reflow Complete: Cooling Started"
+        body = (
+            "Your reflow cycle has completed and the oven is now cooling.\n\n"
+            f"Profile: {self.current_profile_key}\n"
+            f"Time: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        )
+        msg = f"From: {user}\r\nTo: {to_addr}\r\nSubject: {subject}\r\n\r\n{body}"
+
+        def _worker():
+            try:
+                context = ssl.create_default_context()
+                with smtplib.SMTP(host, port, timeout=10) as server:
+                    server.ehlo()
+                    if port == 587:
+                        server.starttls(context=context)
+                        server.ehlo()
+                    server.login(user, pwd)
+                    server.sendmail(user, [to_addr], msg)
+            except Exception as e:
+                # Surface errors on the UI thread
+                err = str(e)
+                self.root.after(0, lambda msg=err: messagebox.showerror("Email", f"Send failed: {msg}"))
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     # ---------- RX Parsing ----------
     def poll_serial_rx(self):
@@ -687,13 +785,20 @@ class ReflowGUI:
                 line = payload
                 self.last_line_time = time.time()
 
-                if line.startswith("TEMP"):
+                if line.lower().startswith("temp"):
                     try:
-                        s = line.replace("TEMP", "").replace(":", " ").strip()
+                        # Handles: "Temp: 123C", "Temp:123C", "TEMP: 123", etc.
+                        s = line.replace("Temp", "").replace("TEMP", "")
+                        s = s.replace(":", " ").replace("C", " ").strip()
                         val = float(s.split()[0])
+
                         self.last_temp = val
                         self.lbl_temp.config(text=f"Temp: {val:.2f} °C")
                         self._push_temp(val)
+                        phase, _pct, _rng = self._compute_phase_and_progress(val)
+                        if self.is_running and (not self.email_sent) and phase == "COOLING":
+                            self.email_sent = True
+                            self._send_email_notification()
                     except Exception:
                         pass
 
@@ -710,6 +815,9 @@ class ReflowGUI:
         self.root.after(50, self.poll_serial_rx)
 
     def _push_temp(self, val: float):
+        if not self.graph_started:
+            self.graph_started = True
+            self.start_time = time.time()
         if self.is_running:
             t = time.time() - self.start_time
         else:
