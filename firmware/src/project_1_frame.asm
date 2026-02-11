@@ -186,7 +186,7 @@ SERVO_PERIOD   EQU 20 ; pwm signal period for the servo motor (20 ms)
 SERVO_0        EQU 1 ; pwm high time for the servo motor to stay at 0 degree
 SERVO_180      EQU 2 ; pwm high time for the servo motor to stay at 180 degrees
 
-COLD_JUNCTION_TEMP equ 20
+COLD_JUNCTION_TEMP equ 22
 MAX_POWER	   EQU 1500 ; max oven power
 NO_POWER	   EQU 0    ; no power
 BASE_POWER     EQU (MAX_POWER/5) ; 20% base power for state 2, 4
@@ -1338,6 +1338,8 @@ Reset_Delay_Inner:
     lcall Update_Screen_Full
     ;-----
     lcall Initialize_Serial_Port
+
+    lcall music ; boot up music
 ;-------------------------------------------------------------------------------;
 ; while(1) loop
 ;-------------------------------------------------------------------------------;
@@ -2457,5 +2459,244 @@ state_7_power_control:
 
 power_control_done:
 	ret
+
+; function for playing the boot up music
+music:
+	; 1
+	lcall playC
+	lcall delayHalfSec
+	; 1
+	lcall playC
+	lcall delayHalfSec
+	; 5
+	lcall playG
+	lcall delayHalfSec
+	; 5
+	lcall playG
+	lcall delayHalfSec
+	; 6
+	lcall PlayA
+	lcall delayHalfSec
+	; 6
+	lcall PlayA
+	lcall delayHalfSec
+	; 5
+	lcall playG
+	lcall delayHalfSec
+	; 4
+	lcall playF
+	lcall delayHalfSec
+
+	; 4
+	lcall playF
+	lcall delayHalfSec
+	; 3
+	lcall playE
+	lcall delayHalfSec
+
+	; 3
+	lcall playE
+	lcall delayHalfSec
+
+	; 2
+	lcall playD
+	lcall delayHalfSec
+
+	; 2
+	lcall playD
+	lcall delayHalfSec
+	; 1
+	lcall playC
+	lcall delayHalfSec
+	
+	lcall delayHalfSec
+	ret
+
+;------------------------------------
+; Play_C_0p5s
+; Plays ~523 Hz on P1.7 for 0.5 seconds
+;------------------------------------
+playC:
+    MOV R7, #20        ; outer loop counter
+
+OUTER_LOOP:
+    MOV R6, #26        ; inner loop counter
+
+INNER_LOOP:
+    CPL SOUND_OUT           ; toggle buzzer pin
+    LCALL Delay_C      ; ~960 �s delay
+    DJNZ R6, INNER_LOOP
+
+    DJNZ R7, OUTER_LOOP
+
+    CLR SOUND_OUT           ; stop sound (pin low)
+    RET
+    
+Delay_C:
+    MOV R5, #24        ; 24 � 40 �s = 960 �s
+DELAY_LOOP:
+    LCALL Wait40uSec
+    DJNZ R5, DELAY_LOOP
+    RET
+    
+
+;------------------------------------
+; Play_G_0p5s
+; Plays ~784 Hz on P1.7 for 0.5 seconds
+;------------------------------------
+playG:
+    MOV R7, #31        ; outer loop
+
+OUTER_G:
+    MOV R6, #25        ; inner loop 31 � 25 = 775 toggles
+
+INNER_G:
+    CPL SOUND_OUT           ; toggle buzzer pin
+    LCALL Delay_G      ; ~640 �s delay
+    DJNZ R6, INNER_G
+
+    DJNZ R7, OUTER_G
+
+    CLR SOUND_OUT           ; stop sound
+    RET
+    
+Delay_G:
+    MOV R5, #16        ; 16 � 40 �s = 640 �s
+DELAY_G_LOOP:
+    LCALL Wait40uSec
+    DJNZ R5, DELAY_G_LOOP
+    RET
+    	
+ 
+ ;------------------------------------
+; Play_A_0p5s
+; Plays ~880 Hz on P1.7 for 0.5 seconds
+;------------------------------------
+playA:
+    MOV R7, #34        ; outer loop counter
+
+OUTER_A:
+    MOV R6, #26        ; inner loop ? 34 � 26 = 884 toggles
+
+INNER_A:
+    CPL SOUND_OUT           ; toggle buzzer pin
+    LCALL Delay_A      ; ~560 �s delay
+    DJNZ R6, INNER_A
+
+    DJNZ R7, OUTER_A
+
+    CLR SOUND_OUT          ; stop sound
+    RET
+
+Delay_A:
+    MOV R5, #14        ; 14 � 40 �s = 560 �s
+DELAY_A_LOOP:
+    LCALL Wait40uSec
+    DJNZ R5, DELAY_A_LOOP
+    RET
+
+;------------------------------------
+; Play_F_0p5s
+; Plays ~698 Hz on P1.7 for 0.5 seconds
+;------------------------------------
+playF:
+    MOV R7, #26        ; outer loop
+
+OUTER_F:
+    MOV R6, #27        ; inner loop ? 26 � 27 = 702 toggles
+
+INNER_F:
+    CPL SOUND_OUT          ; toggle buzzer pin
+    LCALL Delay_F      ; ~720 �s delay
+    DJNZ R6, INNER_F
+
+    DJNZ R7, OUTER_F
+
+    CLR SOUND_OUT           ; stop sound
+    RET
+
+Delay_F:
+    MOV R5, #18        ; 18 � 40 �s = 720 �s
+DELAY_F_LOOP:
+    LCALL Wait40uSec
+    DJNZ R5, DELAY_F_LOOP
+    RET
+
+
+;------------------------------------
+; Play_E_0p5s
+; Plays ~659 Hz on P1.7 for 0.5 seconds
+;------------------------------------
+playE:
+    MOV R7, #26        ; outer loop
+
+OUTER_E:
+    MOV R6, #25        ; inner loop ? 26 � 25 = 650 toggles
+
+INNER_E:
+    CPL SOUND_OUT           ; toggle buzzer pin
+    LCALL Delay_E      ; ~760 �s delay
+    DJNZ R6, INNER_E
+
+    DJNZ R7, OUTER_E
+
+    CLR SOUND_OUT          ; stop sound
+    RET
+    
+Delay_E:
+    MOV R5, #19        ; 19 � 40 �s = 760 �s
+DELAY_E_LOOP:
+    LCALL Wait40uSec
+    DJNZ R5, DELAY_E_LOOP
+    RET
+
+
+;------------------------------------
+; Play_D_0p5s
+; Plays ~587 Hz on P1.7 for 0.5 seconds
+;------------------------------------
+playD:
+    MOV R7, #25        ; outer loop
+
+OUTER_D:
+    MOV R6, #24        ; inner loop ? 25 � 24 = 600 toggles
+
+INNER_D:
+    CPL SOUND_OUT          ; toggle buzzer pin
+    LCALL Delay_D      ; ~840 �s delay
+    DJNZ R6, INNER_D
+
+    DJNZ R7, OUTER_D
+
+    CLR SOUND_OUT         ; stop sound
+    RET
+    
+Delay_D:
+    MOV R5, #21        ; 21 � 40 �s = 840 �s
+DELAY_D_LOOP:
+    LCALL Wait40uSec
+    DJNZ R5, DELAY_D_LOOP
+    RET
+
+delayHalfSec:
+	mov	R2, #250
+	lcall WaitmilliSec
+	;lcall WaitmilliSec
+	ret
+
+;---------------------------------;
+; Wait 'R2' milliseconds, blocking;
+;---------------------------------;
+WaitmilliSec:
+    push AR0
+    push AR1
+loop3: mov R1, #40
+loop2: mov R0, #104
+loop1: djnz R0, loop1 ; 4 cycles->4*60.24ns*104=25.0us
+    djnz R1, loop2 ; 25us*40=1.0ms
+    djnz R2, loop3 ; number of millisecons to wait passed in R2
+    pop AR1
+    pop AR0
+    ret
 ;-------------------------------------------------------------------------------
 END
