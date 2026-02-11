@@ -1653,6 +1653,7 @@ Safety_Logic_Proceed:
     setb state_change_signal    
 
 Safety_TC_Done:
+    clr tc_missing_abort
     pop  AR1
     pop  AR0
     pop  psw
@@ -1816,6 +1817,8 @@ Control_FSM_state2_a:
     setb tc_startup_window 
     clr tc_missing_abort
     clr soak_temp_reached
+    mov current_time_sec, #0
+    mov current_time_minute, #0
 	ret
 Control_FSM_state2:
     cjne a, #2, Control_FSM_state3
@@ -3396,6 +3399,11 @@ Reset_Delay_Inner:
     clr one_millisecond_flag_servo
     clr remote_config_mode
     clr DC_OUT
+    clr PWM_OUT
+    clr LED_LEFT
+    clr LED_MID
+    clr LED_RIGHT
+
     ; Set bit
 	setb state_change_signal
     setb tc_startup_window
