@@ -269,6 +269,8 @@ String_state4:    db 'Ramp to Reflow ', 0
 String_state5:    db 'Reflow Phase   ', 0
 String_state6:    db 'Cooling        ', 0
 String_state7:    db 'Process Done   ', 0
+String_boot_Line1: db'Bing Bing Bing ', 0
+String_boot_Line2: db'Welcome to Use ', 0
 
 String_Blank:    db '                ', 0
 
@@ -932,8 +934,16 @@ LCD_Done_Bridge:
 Check_Live_Update:
     jnb one_second_flag, LCD_Done_Bridge
     clr one_second_flag
+
+    ; Update 7 seg Temp Update for all time
+    mov x, current_temp
+    mov x+1, current_temp+1
+    mov x+2, current_temp+2
+    mov x+3, current_temp+3
+    lcall hex2bcd
+    lcall Update_HEX_Temp 
     
-    ; Only update temp for States 2, 3, 4, 5, 6
+    ; Only update temp for States 2, 3, 4, 5, 6 on LCD
     mov a, Control_FSM_state
     cjne a, #2, Check_St3
     sjmp LCD_Update_Temp_Value
@@ -956,8 +966,7 @@ LCD_Update_Temp_Value:
     mov x+1, current_temp+1
     mov x+2, current_temp+2
     mov x+3, current_temp+3
-    lcall hex2bcd
-    lcall Update_HEX_Temp 
+
     mov a, bcd+1
     anl a, #0x0F
     add a, #0x30
@@ -1660,13 +1669,15 @@ Safety_Logic_Proceed:
     clr  PWM_OUT
     setb tc_missing_abort
     setb stop_signal
-    lcall Beep_Ten
     
     ; Force FSM to State 0 (Welcome)
     mov Control_FSM_state, #0
     
     ; Force UI to State 0 (Home Screen)
     mov Current_State, #0
+
+    ; Beep alarm
+    lcall Beep_Ten
     
     ; Trigger Screen Refresh
     setb state_change_signal          ; Tell loop to redraw "Welcome"
@@ -1693,14 +1704,6 @@ Safety_TC_Done:
 Beep_Judge:
     push acc
     push psw
-
-    ; --- Priority 1: Error condition (highest priority) ---
-    jnb tc_missing_abort, Beep_Judge_Check_State6
-    ; Error detected - beep 10 times (only once per error)
-    jb beep_error_done, Beep_Judge_Done   ; Already beeped for this error?
-    setb beep_error_done                   ; Mark as handled
-    lcall Beep_Ten
-    sjmp Beep_Judge_Done
 
 Beep_Judge_Check_State6:
     ; --- Priority 2: Entering State 6 (finished) ---
@@ -1799,10 +1802,17 @@ Beep_Stop:
 
 Beep_Done:
     ret
+    
 ;-------------------------------------------------------------------------------;
 ; Main Control FSM for the entire process
 ;-------------------------------------------------------------------------------;
 Control_FSM:
+    ; Check abort first
+    jnb stop_signal, Control_FSM_normal
+    clr stop_signal
+    ljmp Control_FSM_state0_a    ; Clean transition to state 0
+    
+Control_FSM_normal:
     mov a, Control_FSM_state
     sjmp Control_FSM_state0
 
@@ -1842,6 +1852,8 @@ Control_FSM_state2_a:
 	setb state_change_signal_TC
 	setb state_change_signal_Count
     setb state_change_beep_signal
+    setb tc_startup_window 
+    clr tc_missing_abort
     clr soak_temp_reached
 	ret
 Control_FSM_state2:
@@ -3242,9 +3254,8 @@ DELAY_D_LOOP:
     RET
 
 delayHalfSec:
-	mov	R2, #125
+	mov	R2, #50
 	lcall WaitmilliSec
-	;lcall WaitmilliSec
 	ret
 
 ;---------------------------------;
@@ -3318,6 +3329,13 @@ dc_control:
 dc_control_done:
     ret
 
+Boot_Line_Display_Func:
+    Set_Cursor(1,1)
+    Send_Constant_String(#String_boot_Line1)
+    Set_Cursor(2,1)
+    Send_Constant_String(#String_boot_Line2)
+    ret
+
 ;-------------------------------------------------------------------------------;
 ;         Main program.          
 ;-------------------------------------------------------------------------------;
@@ -3357,7 +3375,7 @@ Reset_Delay_Inner:
 
     ; P3: Col4(In)
     ; P3.0 (Col4) is In (0).
-    mov P3MOD, #01000000B
+    mov P3MOD, #01011100B
     mov P4MOD, #00000001B
 
     ; Turn off all the LEDs
@@ -3442,6 +3460,8 @@ Reset_Delay_Inner:
 	setb state_change_signal
     setb tc_startup_window
 
+    lcall Clear_Screen_Func
+    lcall Boot_Line_Display_Func
     lcall Timer0_Init
     lcall Timer2_Init
     lcall ELCD_4BIT
