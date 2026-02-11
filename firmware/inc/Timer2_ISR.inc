@@ -29,15 +29,18 @@ Timer2_ISR:
     
     clr TF2  ; Timer 2 doesn't clear TF2 automatically. Do it in ISR
 
-    ; --- 1. Existing FSM Timers ---
-    inc KEY1_DEB_timer
+    ; --- 1. Existing Non-Blocking Seconds Increment and Periphals Debounce Timers ---
     inc SEC_FSM_timer
     setb one_ms_pwm_flag 
+	setb one_ms_buzz_flag
     setb one_ms_beep_flag
     setb one_millisecond_flag_servo
+  
+    inc PB0_DEB_timer
+    inc PB2_DEB_timer
+    inc BTN_DEB_timer
 
     ; --- 2. NEW: Non-Blocking Delay Counters ---
-    
     ; A. BUTTON DELAY
     jnb wait25_btn_active, T2_Check_Keypad
     inc wait25_btn_cnt
